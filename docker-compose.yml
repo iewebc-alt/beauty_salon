@@ -6,12 +6,17 @@ services:
       - postgres_data:/var/lib/postgresql/data/
     # Docker Compose автоматически прочитает .env файл и подставит переменные
     environment:
-      - POSTGRES_USER=${DB_USER}
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
-      - POSTGRES_DB=${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    # --- ДОБАВЬТЕ ЭТОТ БЛОК ---
+    ports:
+      - "5432:5432"
+    # --- КОНЕЦ БЛОКА ---
+
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -30,6 +35,8 @@ services:
     # Указываем Docker'у использовать наш .env файл для этого сервиса
     env_file:
       - .env
+    environment:
+      - RUNNING_IN_DOCKER=1 # <--- ДОБАВЬТЕ ЭТУ СТРОКУ
     restart: unless-stopped
   
   bot:

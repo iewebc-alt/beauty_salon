@@ -9,8 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, status, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from passlib.context import CryptContext
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import date, datetime, time, timedelta
 
@@ -25,16 +24,11 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# --- Настройка безопасности ---
+# --- Безопасность ---
 security = HTTPBasic()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-def verify_password(plain_password, stored_password):
-    return secrets.compare_digest(plain_password, stored_password)
-
 def authenticate_user(credentials: HTTPBasicCredentials = Depends(security)):
     is_username_correct = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
-    is_password_correct = verify_password(credentials.password, ADMIN_PASSWORD)
+    is_password_correct = secrets.compare_digest(credentials.password, ADMIN_PASSWORD)
     if not (is_username_correct and is_password_correct):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -43,102 +37,94 @@ def authenticate_user(credentials: HTTPBasicCredentials = Depends(security)):
         )
     return credentials.username
 
-# --- Pydantic модели (схемы) ---
+# --- Pydantic схемы ---
 from pydantic import BaseModel
-
 class ServiceSchema(BaseModel):
     id: int; name: str; price: int; duration_minutes: int
-    class Config: orm_mode = True
-
+    class Config: from_attributes = True
 class MasterSchema(BaseModel):
     id: int; name: str; specialization: str; description: Optional[str] = None
-    class Config: orm_mode = True
-
+    class Config: from_attributes = True
 class AppointmentInfoSchema(BaseModel):
     id: int; start_time: datetime; service_name: str; master_name: str
-    class Config: orm_mode = True
-
+    class Config: from_attributes = True
 class AppointmentCreateSchema(BaseModel):
     telegram_user_id: int; user_name: str; service_id: int; master_id: int; start_time: datetime
-
 class ClientUpdateSchema(BaseModel):
     phone_number: str
-
 class AvailableSlotSchema(BaseModel):
-    time: str
-    master_id: int
+    time: str; master_id: int
 
-# --- Dependency для получения сессии БД ---
+# --- Dependency БД ---
 def get_db():
     db = SessionLocal()
     try: yield db
     finally: db.close()
 
-# --- Функция для создания начальных данных ---
+# --- Создание начальных данных ---
 def create_initial_data(db: Session):
     if db.query(models.Service).count() == 0:
         logging.info("Creating initial services data...")
-        service1 = models.Service(name="Маникюр с покрытием", price=2000, duration_minutes=90)
-        service2 = models.Service(name="Женская стрижка", price=2500, duration_minutes=60)
-        service3 = models.Service(name="Чистка лица", price=3500, duration_minutes=75)
-        service4 = models.Service(name="Наращивание ресниц", price=3000, duration_minutes=120)
-        service5 = models.Service(name="Оформление бровей", price=1500, duration_minutes=45)
-        service6 = models.Service(name="Депиляция", price=3000, duration_minutes=60)
-        db.add_all([service1, service2, service3, service4, service5, service6]); db.commit()
-        logging.info("Services created.")
+        s1=models.Service(name="Маникюр с покрытием", price=2000, duration_minutes=90)
+        s2=models.Service(name="Женская стрижка", price=2500, duration_minutes=60)
+        s3=models.Service(name="Чистка лица", price=3500, duration_minutes=75)
+        s4=models.Service(name="Наращивание ресниц", price=3000, duration_minutes=120)
+        s5=models.Service(name="Оформление бровей", price=1500, duration_minutes=45)
+        s6=models.Service(name="Депиляция", price=3000, duration_minutes=60)
+        db.add_all([s1, s2, s3, s4, s5, s6]); db.commit()
     if db.query(models.Master).count() == 0:
         logging.info("Creating initial masters data...")
-        s_manicure = db.query(models.Service).filter_by(name="Маникюр с покрытием").one()
-        s_haircut = db.query(models.Service).filter_by(name="Женская стрижка").one()
-        s_facial = db.query(models.Service).filter_by(name="Чистка лица").one()
-        s_eyelash = db.query(models.Service).filter_by(name="Наращивание ресниц").one()
-        s_eyebrow = db.query(models.Service).filter_by(name="Оформление бровей").one()
-        master1 = models.Master(name="Анна Смирнова", specialization="Мастер маникюра и педикюра", description="Опыт работы более 5 лет.")
-        master2 = models.Master(name="Елена Волкова", specialization="Парикмахер-стилист", description="Специализируюсь на сложных окрашиваниях.")
-        db.add_all([master1, master2]); db.commit()
-        master1.services.extend([s_manicure, s_facial, s_eyelash, s_eyebrow])
-        master2.services.append(s_haircut)
+        s_manicure=db.query(models.Service).filter_by(name="Маникюр с покрытием").one()
+        s_haircut=db.query(models.Service).filter_by(name="Женская стрижка").one()
+        s_facial=db.query(models.Service).filter_by(name="Чистка лица").one()
+        s_eyelash=db.query(models.Service).filter_by(name="Наращивание ресниц").one()
+        s_eyebrow=db.query(models.Service).filter_by(name="Оформление бровей").one()
+        m1=models.Master(name="Анна Смирнова", specialization="Мастер маникюра", description="Опыт 5 лет.")
+        m2=models.Master(name="Елена Волкова", specialization="Парикмахер-стилист", description="Сложные окрашивания.")
+        db.add_all([m1, m2]); db.commit()
+        m1.services.extend([s_manicure, s_facial, s_eyelash, s_eyebrow])
+        m2.services.append(s_haircut)
         db.commit()
-        schedules = [
-            models.Schedule(master_id=master1.id, day_of_week=1, start_time=time(10, 0), end_time=time(19, 0)),
-            models.Schedule(master_id=master1.id, day_of_week=3, start_time=time(10, 0), end_time=time(19, 0)),
-            models.Schedule(master_id=master1.id, day_of_week=5, start_time=time(10, 0), end_time=time(19, 0)),
-            models.Schedule(master_id=master2.id, day_of_week=2, start_time=time(9, 0), end_time=time(18, 0)),
-            models.Schedule(master_id=master2.id, day_of_week=4, start_time=time(9, 0), end_time=time(18, 0)),
-            models.Schedule(master_id=master2.id, day_of_week=6, start_time=time(9, 0), end_time=time(18, 0)),
-        ]
+        schedules=[models.Schedule(master_id=m1.id,day_of_week=d,start_time=time(10,0),end_time=time(19,0)) for d in [1,3,5]]
+        schedules.extend([models.Schedule(master_id=m2.id,day_of_week=d,start_time=time(9,0),end_time=time(18,0)) for d in [2,4,6]])
         db.add_all(schedules); db.commit()
-        logging.info("Masters, services relations and schedules created.")
+        logging.info("Initial data created.")
+with SessionLocal() as db: create_initial_data(db)
 
-with SessionLocal() as db:
-    create_initial_data(db)
-
-# ========= Секция Веб-админки (ЗАЩИЩЕННАЯ) =========
+# ========= Веб-админка =========
 @app.get("/admin/schedule")
-def admin_schedule_page(request: Request, selected_date_str: Optional[str] = None, db: Session = Depends(get_db), username: str = Depends(authenticate_user)):
-    if selected_date_str:
-        try: selected_date = datetime.strptime(selected_date_str, "%Y-%m-%d").date()
-        except ValueError: selected_date = date.today()
-    else: selected_date = date.today()
+def admin_schedule_page(request: Request, selected_date_str: Optional[str]=None, db: Session=Depends(get_db), username: str=Depends(authenticate_user)):
+    try: selected_date=datetime.strptime(selected_date_str, "%Y-%m-%d").date() if selected_date_str else date.today()
+    except ValueError: selected_date=date.today()
     prev_date, next_date = selected_date - timedelta(days=1), selected_date + timedelta(days=1)
-    masters_on_schedule = db.query(models.Master).order_by(models.Master.name).all()
+    masters = db.query(models.Master).order_by(models.Master.name).all()
     start_of_day, end_of_day = datetime.combine(selected_date, time.min), datetime.combine(selected_date, time.max)
-    appointments = db.query(models.Appointment).order_by(models.Appointment.start_time).filter(models.Appointment.start_time.between(start_of_day, end_of_day)).all()
+    appointments = db.query(models.Appointment).options(joinedload(models.Appointment.client), joinedload(models.Appointment.service)).filter(models.Appointment.start_time.between(start_of_day, end_of_day)).order_by(models.Appointment.start_time).all()
     all_services = db.query(models.Service).order_by(models.Service.name).all()
-    all_masters = db.query(models.Master).order_by(models.Master.name).all()
-    context = {"request": request, "selected_date": selected_date, "prev_date": prev_date, "next_date": next_date, "masters": masters_on_schedule, "appointments": appointments, "all_services": all_services, "all_masters": all_masters}
+    context = {"request": request, "selected_date": selected_date, "prev_date": prev_date, "next_date": next_date, "masters": masters, "appointments": appointments, "all_services": all_services, "all_masters": masters}
     return templates.TemplateResponse("schedule.html", context)
 
-# ========= Секция API для бота (ОТКРЫТАЯ) =========
+# ========= API для бота =========
 @app.get("/")
 def read_root(): return {"message": "Beauty Salon API is running"}
+
 @app.get("/api/v1/services", response_model=List[ServiceSchema])
-def get_services(db: Session = Depends(get_db)): return db.query(models.Service).all()
+def get_services(db: Session = Depends(get_db)):
+    return db.query(models.Service).join(models.Service.masters).distinct().all()
+
 @app.get("/api/v1/masters", response_model=List[MasterSchema])
-def get_masters(db: Session = Depends(get_db)): return db.query(models.Master).all()
+def get_masters(db: Session = Depends(get_db)):
+    return db.query(models.Master).all()
+
+@app.get("/api/v1/services/{service_id}/masters", response_model=List[MasterSchema])
+def get_masters_for_service(service_id: int, db: Session = Depends(get_db)):
+    service = db.query(models.Service).options(joinedload(models.Service.masters)).filter(models.Service.id == service_id).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    return service.masters
 
 @app.get("/api/v1/available-slots", response_model=List[AvailableSlotSchema])
-def get_available_slots(service_id: int, selected_date: date, master_id: Optional[int] = None, db: Session = Depends(get_db)):
+def get_available_slots(service_id: int, selected_date: date, master_id: Optional[int]=None, db: Session=Depends(get_db)):
     service = db.query(models.Service).filter(models.Service.id == service_id).first()
     if not service: raise HTTPException(status_code=404, detail="Service not found")
     duration = timedelta(minutes=service.duration_minutes)
@@ -146,9 +132,9 @@ def get_available_slots(service_id: int, selected_date: date, master_id: Optiona
     if master_id: masters_query = masters_query.filter(models.Master.id == master_id)
     potential_masters = masters_query.all()
     if not potential_masters:
-        if master_id: raise HTTPException(status_code=404, detail=f"Master with id {master_id} not found or doesn't provide service with id {service_id}")
+        if master_id: raise HTTPException(status_code=404, detail=f"Master with id {master_id} not found for this service")
         return []
-    all_available_slots = []
+    all_slots = []
     day_of_week = selected_date.isoweekday()
     for master in potential_masters:
         schedule = db.query(models.Schedule).filter(models.Schedule.master_id == master.id, models.Schedule.day_of_week == day_of_week).first()
@@ -163,26 +149,23 @@ def get_available_slots(service_id: int, selected_date: date, master_id: Optiona
             is_free = True
             for appt in appointments:
                 if max(slot_start, appt.start_time) < min(slot_end, appt.end_time): is_free = False; break
-            if is_free: all_available_slots.append({"time": slot_start.strftime("%H:%M"), "master_id": master.id})
+            if is_free: all_slots.append({"time": slot_start.strftime("%H:%M"), "master_id": master.id})
             slot_start += slot_step
-    return sorted(all_available_slots, key=lambda x: x['time'])
+    return sorted(all_slots, key=lambda x: x['time'])
 
-# --- ИСПРАВЛЕННЫЙ ПОРЯДОК: Эта функция теперь ВЫШЕ get_active_days ---
 @app.get("/api/v1/active-days-in-month", response_model=List[int])
-def get_active_days(service_id: int, year: int, month: int, master_id: Optional[int] = None, db: Session = Depends(get_db)):
-    try:
-        num_days_in_month = calendar.monthrange(year, month)[1]
-    except calendar.IllegalMonthError:
-        return []
-    active_days_list = []
-    for day in range(1, num_days_in_month + 1):
+def get_active_days(service_id: int, year: int, month: int, master_id: Optional[int]=None, db: Session=Depends(get_db)):
+    try: num_days = calendar.monthrange(year, month)[1]
+    except calendar.IllegalMonthError: return []
+    active_days = []
+    for day in range(1, num_days + 1):
         current_date = date(year, month, day)
-        if current_date < date.today():
-            continue
-        slots = get_available_slots(service_id=service_id, selected_date=current_date, master_id=master_id, db=db)
-        if slots:
-            active_days_list.append(day)
-    return active_days_list
+        if current_date < date.today(): continue
+        if get_available_slots(service_id=service_id, selected_date=current_date, master_id=master_id, db=db):
+            active_days.append(day)
+    return active_days
+
+# ... (остальные эндпоинты без изменений)
 
 @app.post("/api/v1/appointments")
 def create_appointment(appointment: AppointmentCreateSchema, db: Session = Depends(get_db)):

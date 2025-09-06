@@ -1,3 +1,4 @@
+
 import asyncio
 import logging
 import httpx
@@ -146,7 +147,6 @@ async def start_booking(message: types.Message, state: FSMContext):
         await message.answer("😔 Не удалось загрузить список услуг.")
         await state.clear()
 
-# --- ОБРАБОТЧИКИ КНОПКИ "НАЗАД" ---
 @dp.callback_query(F.data == "back_to_service")
 async def back_to_service_selection(callback: types.CallbackQuery, state: FSMContext):
     await start_booking(callback.message, state)
@@ -171,7 +171,6 @@ async def back_to_time_selection(callback: types.CallbackQuery, state: FSMContex
     callback.data = f"cal_day:{selected_date.year}:{selected_date.month}:{selected_date.day}"
     await process_date_selected(callback, state)
     await callback.answer()
-
 
 @dp.callback_query(AppointmentStates.choosing_service, F.data.startswith("service_select:"))
 async def service_selected(callback: types.CallbackQuery, state: FSMContext):
@@ -253,20 +252,11 @@ async def process_date_selected(callback: types.CallbackQuery, state: FSMContext
         slots = response.json()
         if not slots:
             await callback.answer("На эту дату свободных слотов нет.", show_alert=True); return
-        
-        # --- НАЧАЛО ИСПРАВЛЕННОГО БЛОКА ---
         builder = InlineKeyboardBuilder()
-        # Сначала добавляем все кнопки времени
         for slot in slots:
             builder.button(text=slot['time'], callback_data=f"time_select:{slot['time']}:{slot['master_id']}")
-        
-        # Затем добавляем кнопку "Назад"
         builder.button(text="◀️ Назад", callback_data="back_to_date")
-        
-        # И только в конце применяем форматирование ко всем добавленным кнопкам
         builder.adjust(4, 1)
-        # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
-
         await callback.message.edit_text("Выберите удобное время:", reply_markup=builder.as_markup())
         await state.update_data(selected_date=selected_date.isoformat())
         await state.set_state(AppointmentStates.choosing_time)
@@ -290,7 +280,9 @@ async def time_selected(callback: types.CallbackQuery, state: FSMContext):
                     response = await client.get(f"{API_URL}/api/v1/masters"); response.raise_for_status()
                 all_masters = {master['id']: master['name'] for master in response.json()}
                 master_name_for_confirmation = all_masters.get(selected_master_id, f"Мастер ID {selected_master_id}")
-            except Exception: master_name_for_confirmation = f"Мастер ID {selected_master_id}"
+            except Exception as e:
+                logging.error(f"Failed to fetch master name: {e}")
+                master_name_for_confirmation = f"Мастер ID {selected_master_id}"
         confirmation_text = (f"Подтвердите запись:\n\n"
                              f"🔹 Услуга: {user_data['service_name']} ({user_data['service_price']} руб.)\n"
                              f"🔹 Мастер: {master_name_for_confirmation}\n"

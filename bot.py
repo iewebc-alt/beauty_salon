@@ -64,13 +64,42 @@ async def cmd_start(message: types.Message, state: FSMContext):
     await message.answer(f"Здравствуйте, {message.from_user.full_name}!\nДоступные команды:\n/book - Записаться\n/my_appointments - Мои записи\n/cancel - Отмена")
 
 @dp.message(Command("my_appointments"))
-# ... (код без изменений)
+async def show_my_appointments(message: types.Message):
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{API_URL}/api/v1/clients/{message.from_user.id}/appointments"); response.raise_for_status()
+        appointments = response.json()
+        if not appointments: await message.answer("У вас нет предстоящих записей."); return
+        await message.answer("Ваши предстоящие записи:")
+        for appt in appointments:
+            dt_object = datetime.fromisoformat(appt['start_time'])
+            response_text = (f"🗓 *{dt_object.strftime('%d %B %Y в %H:%M')}*\n"
+                             f"Услуга: {appt['service_name']}\nМастер: {appt['master_name']}")
+            builder = InlineKeyboardBuilder().button(text="❌ Отменить", callback_data=f"cancel_appt:{appt['id']}")
+            await message.answer(response_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        await message.answer("😔 Не удалось загрузить список записей.")
 
 @dp.callback_query(F.data.startswith("cancel_appt:"))
-# ... (код без изменений)
+async def cancel_appointment_handler(callback: types.CallbackQuery):
+    appointment_id = int(callback.data.split(":")[1])
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(f"{API_URL}/api/v1/appointments/{appointment_id}"); response.raise_for_status()
+        await callback.message.edit_text("✅ Ваша запись успешно отменена.")
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        await callback.message.edit_text("😔 Не удалось отменить запись.")
+    await callback.answer()
 
 @dp.message(F.contact)
-# ... (код без изменений)
+async def handle_contact(message: types.Message):
+    try:
+        payload = {"phone_number": message.contact.phone_number}
+        async with httpx.AsyncClient() as client:
+            response = await client.patch(f"{API_URL}/api/v1/clients/{message.from_user.id}", json=payload); response.raise_for_status()
+        await message.answer("Спасибо! Ваш номер телефона сохранен.", reply_markup=types.ReplyKeyboardRemove())
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        await message.answer("😔 Не удалось сохранить номер.")
 
 # --- FSM ---
 @dp.message(Command("cancel"))
@@ -96,8 +125,7 @@ async def start_booking(message: types.Message, state: FSMContext):
 # Шаг 2
 @dp.callback_query(AppointmentStates.choosing_service, F.data.startswith("service_select:"))
 async def service_selected(callback: types.CallbackQuery, state: FSMContext):
-    parts = callback.data.split(":", 3)
-    service_id, service_name, service_price = int(parts[1]), parts[2], parts[3]
+    parts = callback.data.split(":", 3); service_id, service_name, service_price = int(parts[1]), parts[2], parts[3]
     await state.update_data(service_id=service_id, service_name=service_name, service_price=service_price)
     try:
         async with httpx.AsyncClient() as client:
@@ -118,19 +146,17 @@ async def service_selected(callback: types.CallbackQuery, state: FSMContext):
 # Шаг 3
 @dp.callback_query(AppointmentStates.choosing_master, F.data.startswith("master_select:"))
 async def master_selected_show_calendar(callback: types.CallbackQuery, state: FSMContext):
-    parts = callback.data.split(":", 2)
-    master_id_str, master_name = parts[1], parts[2]
+    parts = callback.data.split(":", 2); master_id_str, master_name = parts[1], parts[2]
     master_id = None if master_id_str == 'any' else int(master_id_str)
     await state.update_data(master_id=master_id, master_name=master_name)
-    today = date.today()
-    user_data = await state.get_data()
+    today = date.today(); user_data = await state.get_data()
     try:
         params = {"service_id": user_data['service_id'], "year": today.year, "month": today.month}
         if master_id: params["master_id"] = master_id
         async with httpx.AsyncClient() as client:
             response = await client.get(f"{API_URL}/api/v1/active-days-in-month", params=params); response.raise_for_status()
         active_days = set(response.json())
-    except (httpx.RequestError, httpx.HTTPStatusError): active_days = set()
+    except: active_days = set()
     calendar_kb = create_calendar_keyboard(today.year, today.month, active_days)
     back_button = types.InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_master")
     calendar_kb.inline_keyboard.append([back_button])
@@ -159,8 +185,7 @@ async def process_date_selected(callback: types.CallbackQuery, state: FSMContext
         builder.adjust(4)
         await callback.message.edit_text("Выберите удобное время:", reply_markup=builder.as_markup())
         await state.set_state(AppointmentStates.choosing_time)
-    except (httpx.RequestError, httpx.HTTPStatusError):
-        await callback.message.edit_text("😔 Ошибка при поиске слотов."); await state.clear()
+    except: await callback.message.edit_text("😔 Ошибка при поиске слотов."); await state.clear()
     await callback.answer()
 
 # Шаг 5
@@ -177,7 +202,7 @@ async def time_selected(callback: types.CallbackQuery, state: FSMContext):
                     response = await client.get(f"{API_URL}/api/v1/masters"); response.raise_for_status()
                 all_masters = {master['id']: master['name'] for master in response.json()}
                 master_name_for_confirmation = all_masters.get(selected_master_id, f"Мастер ID {selected_master_id}")
-            except Exception as e: logging.error(f"Failed to fetch master name: {e}"); master_name_for_confirmation = f"Мастер ID {selected_master_id}"
+            except: master_name_for_confirmation = f"Мастер ID {selected_master_id}"
         confirmation_text = (f"Подтвердите запись:\n\n"
                              f"🔹 Услуга: {user_data['service_name']} ({user_data['service_price']} руб.)\n"
                              f"🔹 Мастер: {master_name_for_confirmation}\n"
@@ -187,7 +212,7 @@ async def time_selected(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.edit_text(confirmation_text, reply_markup=builder.as_markup())
         await state.set_state(AppointmentStates.confirmation)
     except Exception as e:
-        logging.error(f"CRITICAL ERROR in [time_selected] handler: {e}", exc_info=True)
+        logging.error(f"CRITICAL ERROR in [time_selected]: {e}", exc_info=True)
         await callback.answer("Произошла внутренняя ошибка.", show_alert=True); await state.clear()
     await callback.answer()
 
@@ -203,7 +228,7 @@ async def process_calendar_nav(callback: types.CallbackQuery, state: FSMContext)
         async with httpx.AsyncClient() as client:
             response = await client.get(f"{API_URL}/api/v1/active-days-in-month", params=params); response.raise_for_status()
         active_days = set(response.json())
-    except (httpx.RequestError, httpx.HTTPStatusError): active_days = set()
+    except: active_days = set()
     calendar_kb = create_calendar_keyboard(year, month, active_days)
     back_button = types.InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_master")
     calendar_kb.inline_keyboard.append([back_button])
@@ -211,41 +236,70 @@ async def process_calendar_nav(callback: types.CallbackQuery, state: FSMContext)
     await callback.answer()
 
 # --- ОБРАБОТЧИКИ "НАЗАД" ---
-@dp.callback_query(F.data == "back_to_service", StateFilter(AppointmentStates.choosing_master))
+@dp.callback_query(StateFilter(AppointmentStates.choosing_master), F.data == "back_to_service")
 async def back_to_service(callback: types.CallbackQuery, state: FSMContext):
-    await start_booking(callback.message, state)
-    try: await callback.message.delete()
-    except Exception: pass
-    await callback.answer()
-
-@dp.callback_query(F.data == "back_to_master", StateFilter(AppointmentStates.choosing_date))
-async def back_to_master(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(AppointmentStates.choosing_service)
-    user_data = await state.get_data()
-    callback.data = f"service_select:{user_data['service_id']}:{user_data['service_name']}:{user_data['service_price']}"
-    await service_selected(callback, state)
+    # Повторяем логику start_booking, но с редактированием сообщения
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{API_URL}/api/v1/services"); response.raise_for_status()
+        services = response.json()
+        builder = InlineKeyboardBuilder()
+        for service in services: builder.button(text=f"{service['name']} ({service['price']} руб.)", callback_data=f"service_select:{service['id']}:{service['name']}:{service['price']}")
+        builder.adjust(1)
+        await callback.message.edit_text("Выберите услугу:", reply_markup=builder.as_markup())
+    except:
+        await callback.message.edit_text("😔 Не удалось загрузить услуги.")
+        await state.clear()
     await callback.answer()
 
-@dp.callback_query(F.data == "back_to_date", StateFilter(AppointmentStates.choosing_time))
-async def back_to_date(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(StateFilter(AppointmentStates.choosing_date), F.data == "back_to_master")
+async def back_to_master(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(AppointmentStates.choosing_master)
     user_data = await state.get_data()
-    master_id_str = user_data.get('master_id', 'any')
-    master_name = user_data.get('master_name', 'Любой мастер')
-    callback.data = f"master_select:{master_id_str}:{master_name}"
+    service_id = user_data.get('service_id')
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{API_URL}/api/v1/services/{service_id}/masters"); response.raise_for_status()
+        masters = response.json()
+        builder = InlineKeyboardBuilder()
+        if len(masters) > 1: builder.button(text="Любой свободный мастер", callback_data="master_select:any:Любой мастер")
+        for master in masters: builder.button(text=master['name'], callback_data=f"master_select:{master['id']}:{master['name']}")
+        builder.button(text="◀️ Назад", callback_data="back_to_service")
+        builder.adjust(1)
+        await callback.message.edit_text("Теперь выберите мастера:", reply_markup=builder.as_markup())
+    except:
+        await callback.message.edit_text("😔 Не удалось загрузить мастеров.")
+        await state.clear()
+    await callback.answer()
+
+@dp.callback_query(StateFilter(AppointmentStates.choosing_time), F.data == "back_to_date")
+async def back_to_date(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(AppointmentStates.choosing_date)
     await master_selected_show_calendar(callback, state)
     await callback.answer()
 
-@dp.callback_query(F.data == "back_to_time", StateFilter(AppointmentStates.confirmation))
+@dp.callback_query(StateFilter(AppointmentStates.confirmation), F.data == "back_to_time")
 async def back_to_time(callback: types.CallbackQuery, state: FSMContext):
-    await state.set_state(AppointmentStates.choosing_date)
+    await state.set_state(AppointmentStates.choosing_time)
     user_data = await state.get_data()
-    selected_date_obj = date.fromisoformat(user_data['selected_date'])
-    callback.data = f"cal_day:{selected_date_obj.year}:{selected_date_obj.month}:{selected_date_obj.day}"
-    await process_date_selected(callback, state)
+    selected_date = date.fromisoformat(user_data['selected_date'])
+    params = {"service_id": user_data['service_id'], "selected_date": selected_date.isoformat()}
+    if user_data.get('master_id'): params["master_id"] = user_data['master_id']
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{API_URL}/api/v1/available-slots", params=params); response.raise_for_status()
+        slots = response.json()
+        builder = InlineKeyboardBuilder()
+        time_buttons = [types.InlineKeyboardButton(text=slot['time'], callback_data=f"time_select:{slot['time']}:{slot['master_id']}") for slot in slots]
+        builder.add(*time_buttons)
+        builder.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_date"))
+        builder.adjust(4)
+        await callback.message.edit_text("Выберите удобное время:", reply_markup=builder.as_markup())
+    except: await callback.message.edit_text("😔 Ошибка при поиске слотов."); await state.clear()
     await callback.answer()
 
-# --- Финальное подтверждение ---
+# --- Финал ---
 @dp.callback_query(AppointmentStates.confirmation, F.data == "confirm_booking")
 async def confirm_booking_handler(callback: types.CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
@@ -264,17 +318,15 @@ async def confirm_booking_handler(callback: types.CallbackQuery, state: FSMConte
         await callback.message.answer("Для удобства и быстрой связи, пожалуйста, поделитесь вашим номером телефона.", reply_markup=keyboard)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 409: await callback.message.edit_text("😔 Ой, кто-то только что занял это время! Начните заново (/book).")
-        else: await callback.message.edit_text("😔 Произошла ошибка при создании записи."); logging.error(f"API Error on booking: {e.response.text}")
+        else: await callback.message.edit_text("😔 Произошла ошибка при создании записи."); logging.error(f"API Error: {e.response.text}")
     except httpx.RequestError: await callback.message.edit_text("😔 Сервис записи временно недоступен.")
-    await state.clear()
-    await callback.answer()
+    await state.clear(); await callback.answer()
 
 @dp.callback_query(StateFilter(AppointmentStates.confirmation), F.data == "cancel_booking")
 async def cancel_booking_handler(callback: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text("Запись отменена.")
-    await callback.answer()
+    await state.clear(); await callback.message.edit_text("Запись отменена."); await callback.answer()
 
+# --- Запуск ---
 async def main():
     await bot.set_my_commands([
         types.BotCommand(command="start", description="Начало работы"),

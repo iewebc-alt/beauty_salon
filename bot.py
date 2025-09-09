@@ -276,8 +276,25 @@ async def back_to_master(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(StateFilter(AppointmentStates.choosing_time), F.data == "back_to_date")
 async def back_to_date(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(AppointmentStates.choosing_date)
-    await master_selected_show_calendar(callback, state)
+    user_data = await state.get_data()
+    selected_date = date.fromisoformat(user_data['selected_date'])
+    year, month = selected_date.year, selected_date.month
+    try:
+        params = {"service_id": user_data['service_id'], "year": year, "month": month}
+        if user_data.get('master_id'):
+            params["master_id"] = user_data['master_id']
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{API_URL}/api/v1/active-days-in-month", params=params)
+            response.raise_for_status()
+        active_days = set(response.json())
+    except:
+        active_days = set()
+    calendar_kb = create_calendar_keyboard(year, month, active_days)
+    back_button = types.InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_master")
+    calendar_kb.inline_keyboard.append([back_button])
+    await callback.message.edit_text("Выберите дату:", reply_markup=calendar_kb)
     await callback.answer()
+
 
 @dp.callback_query(StateFilter(AppointmentStates.confirmation), F.data == "back_to_time")
 async def back_to_time(callback: types.CallbackQuery, state: FSMContext):

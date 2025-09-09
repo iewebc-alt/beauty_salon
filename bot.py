@@ -32,13 +32,14 @@ dp = Dispatcher()
 
 # --- Настройка Gemini ---
 gemini_model = None
-# Проверяем, что ключ не пустой и не является значением по умолчанию
-if not GEMINI_API_KEY or "ВАШ_СЕКРЕТНЫЙ_КЛЮЧ" in GEMINI_API_KEY:
-    logging.warning("Ключ API для Gemini не найден или не изменен в config.py! Ответы на отвлеченные темы будут стандартными.")
+# Проверяем, был ли ключ загружен из .env
+if not GEMINI_API_KEY:
+    logging.warning("Ключ API для Gemini (GEMINI_API_KEY) не найден в .env! Ответы на отвлеченные темы будут стандартными.")
 else:
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        gemini_model = genai.GenerativeModel('gemini-pro')
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: используем более стабильное имя модели ---
+        gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
         logging.info("Модель Gemini успешно инициализирована.")
     except Exception as e:
         logging.error(f"Не удалось инициализировать Gemini: {e}")
@@ -328,21 +329,9 @@ async def process_calendar_nav(callback: types.CallbackQuery, state: FSMContext)
 # --- ОБРАБОТЧИКИ "НАЗАД" ---
 @dp.callback_query(StateFilter(AppointmentStates.choosing_master), F.data == "back_to_service")
 async def back_to_service(callback: types.CallbackQuery, state: FSMContext):
-    await state.set_state(AppointmentStates.choosing_service)
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"{API_URL}/api/v1/services")
-            response.raise_for_status()
-        services = response.json()
-        builder = InlineKeyboardBuilder()
-        for service in services:
-            builder.button(text=f"{service['name']} ({service['price']} руб.)", callback_data=f"service_select:{service['id']}:{service['name']}:{service['price']}")
-        builder.adjust(1)
-        await callback.message.edit_text("Хорошо, давайте вернемся к выбору услуги. Что вас интересует? ✨", reply_markup=builder.as_markup())
-    except:
-        await callback.message.edit_text("Ой, снова не могу загрузить список услуг. Технические шоколадки! 🍫 Попробуйте, пожалуйста, через минутку!")
-        await state.clear()
-    await callback.answer()
+    # Используем message из callback, чтобы отправить новое сообщение, а не редактировать
+    await start_booking(callback.message, state)
+    await callback.answer() # Закрываем "часики" на кнопке
 
 @dp.callback_query(StateFilter(AppointmentStates.choosing_date), F.data == "back_to_master")
 async def back_to_master(callback: types.CallbackQuery, state: FSMContext):
@@ -363,56 +352,17 @@ async def back_to_master(callback: types.CallbackQuery, state: FSMContext):
         builder.adjust(1)
         await callback.message.edit_text("Хорошо, давайте выберем другого мастера:", reply_markup=builder.as_markup())
     except:
-        await callback.message.edit_text("Простите, не могу загрузить список мастеров. Пожалуйста, попробуйте еще раз. 🙏")
+        await callback.message.edit_text("Простите, не могу загрузить список мастеров. Попробуйте, пожалуйста, еще раз. 🙏")
         await state.clear()
     await callback.answer()
 
 @dp.callback_query(StateFilter(AppointmentStates.choosing_time), F.data == "back_to_date")
 async def back_to_date(callback: types.CallbackQuery, state: FSMContext):
-    await state.set_state(AppointmentStates.choosing_date)
-    user_data = await state.get_data()
-    today = date.today()
-    year, month = today.year, today.month
-    try:
-        params = {"service_id": user_data['service_id'], "year": year, "month": month}
-        if user_data.get('master_id'):
-            params["master_id"] = user_data['master_id']
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"{API_URL}/api/v1/active-days-in-month", params=params)
-            response.raise_for_status()
-        active_days = set(response.json())
-    except:
-        active_days = set()
-    calendar_kb = create_calendar_keyboard(year, month, active_days)
-    back_button = types.InlineKeyboardButton(text="◀️ Назад к мастерам", callback_data="back_to_master")
-    calendar_kb.inline_keyboard.append([back_button])
-    await callback.message.edit_text("Хорошо, давайте выберем другую дату: 🗓️", reply_markup=calendar_kb)
-    await callback.answer()
-
+    await master_selected_show_calendar(callback, state)
 
 @dp.callback_query(StateFilter(AppointmentStates.confirmation), F.data == "back_to_time")
 async def back_to_time(callback: types.CallbackQuery, state: FSMContext):
-    await state.set_state(AppointmentStates.choosing_time)
-    user_data = await state.get_data()
-    selected_date = date.fromisoformat(user_data['selected_date'])
-    params = {"service_id": user_data['service_id'], "selected_date": selected_date.isoformat()}
-    if user_data.get('master_id'):
-        params["master_id"] = user_data['master_id']
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"{API_URL}/api/v1/available-slots", params=params)
-            response.raise_for_status()
-        slots = response.json()
-        builder = InlineKeyboardBuilder()
-        time_buttons = [types.InlineKeyboardButton(text=slot['time'], callback_data=f"time_select:{slot['time']}:{slot['master_id']}") for slot in slots]
-        builder.add(*time_buttons)
-        builder.row(types.InlineKeyboardButton(text="◀️ Назад к датам", callback_data="back_to_date"))
-        builder.adjust(4)
-        await callback.message.edit_text("Конечно, давайте вернемся к выбору времени: 🕒", reply_markup=builder.as_markup())
-    except:
-        await callback.message.edit_text("Ой, что-то пошло не так при поиске свободного времени. Давайте попробуем еще разок! 😥")
-        await state.clear()
-    await callback.answer()
+    await process_date_selected(callback, state)
 
 # --- Финал ---
 @dp.callback_query(AppointmentStates.confirmation, F.data == "confirm_booking")
@@ -441,13 +391,11 @@ async def confirm_booking_handler(callback: types.CallbackQuery, state: FSMConte
             f"на процедуру «{api_response['service_name']}» к мастеру {api_response['master_name']}. 💖"
         )
         
-        # --- ИСПРАВЛЕННЫЙ БЛОК ---
         keyboard = types.ReplyKeyboardMarkup(
             keyboard=[[types.KeyboardButton(text="📱 Поделиться контактом", request_contact=True)]],
             resize_keyboard=True,
             one_time_keyboard=True
         )
-        # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
         
         await callback.message.answer(
             "Чтобы мы могли оперативно с вами связаться в случае изменений, поделитесь, пожалуйста, вашим контактным номером телефона. Это очень удобно! 😊",
@@ -472,21 +420,64 @@ async def cancel_booking_handler(callback: types.CallbackQuery, state: FSMContex
     await callback.answer()
 
 
-# --- ОБРАБОТЧИКИ НЕПРЕДВИДЕННОГО ВВОДА ---
+# --- НОВАЯ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ---
+async def resend_current_state_message(message: types.Message, state: FSMContext):
+    """
+    Повторно отправляет сообщение с кнопками, соответствующее текущему состоянию FSM.
+    """
+    current_state_str = await state.get_state()
+    user_data = await state.get_data()
+    
+    # Создаем "фейковый" callback, чтобы переиспользовать существующие функции
+    # Это проще, чем дублировать код
+    class FakeCallback:
+        def __init__(self, msg):
+            self.message = msg
+        async def answer(self):
+            pass
+    
+    fake_callback = FakeCallback(message)
 
-# Ловит текст, когда пользователь ДОЛЖЕН нажимать кнопки
+    if current_state_str == AppointmentStates.choosing_service.state:
+        await start_booking(message, state)
+    elif current_state_str == AppointmentStates.choosing_master.state:
+        await service_selected(fake_callback, state)
+    elif current_state_str == AppointmentStates.choosing_date.state:
+        await master_selected_show_calendar(fake_callback, state)
+    elif current_state_str == AppointmentStates.choosing_time.state:
+        await process_date_selected(fake_callback, state)
+    elif current_state_str == AppointmentStates.confirmation.state:
+        await time_selected(fake_callback, state)
+
+
+# --- ОБРАБОТЧИКИ НЕПРЕДВИДЕННОГО ВВОДА ---
 @dp.message(F.text, StateFilter(AppointmentStates))
-async def handle_text_while_in_state(message: types.Message):
-    await message.answer(
-        "Ой, кажется, мы немного отвлеклись! 😊\n"
-        "Пожалуйста, используйте кнопки ниже, чтобы продолжить запись.\n\n"
-        "Если вы передумали, просто нажмите /cancel, чтобы отменить."
-    )
+async def handle_text_while_in_state(message: types.Message, state: FSMContext):
+    if gemini_model:
+        try:
+            await bot.send_chat_action(message.chat.id, 'typing')
+            prompt = (
+                "Ты — Gemini, работающий в режиме милой и дружелюбной девушки-администратора в бьюти-мед салоне 'Элеганс'. "
+                "Клиент находится в процессе записи на услугу (он видит перед собой кнопки для выбора), но вместо нажатия на кнопку написал отвлеченное сообщение. "
+                "Твоя задача — вежливо и креативно отреагировать на его сообщение, но сразу же мягко вернуть его к процессу записи. "
+                "Ты должна напомнить, что ему нужно использовать кнопки, или он может отменить запись командой /cancel. "
+                "Твой ответ должен быть коротким, позитивным, без Markdown. В конце обязательно упомяни команду /cancel. "
+                f'Вот сообщение клиента: "{message.text}"'
+            )
+            response = await gemini_model.generate_content_async(prompt)
+            await message.answer(response.text)
+        except Exception as e:
+            logging.error(f"Ошибка при обращении к Gemini API во время FSM: {e}")
+            await message.answer("Ой, кажется, мы немного отвлеклись! 😊 Давайте вернемся к выбору.")
+            await resend_current_state_message(message, state)
+    else:
+        await message.answer("Ой, кажется, мы немного отвлеклись! 😊")
+        await resend_current_state_message(message, state)
+
 
 # Ловит ЛЮБОЙ контент, когда пользователь НЕ в процессе записи
 @dp.message(StateFilter(None))
 async def handle_unhandled_content(message: types.Message):
-    # Если есть Gemini и это текст - генерируем ответ
     if gemini_model and message.text:
         try:
             await bot.send_chat_action(message.chat.id, 'typing')
@@ -506,7 +497,6 @@ async def handle_unhandled_content(message: types.Message):
                 "✨ /book - Записаться\n"
                 "🗓️ /my_appointments - Мои записи"
             )
-    # Если Gemini нет или это не текст (стикер, фото и т.д.)
     else:
         await message.answer(
             "Какой милый стикер! 😊 Простите, я лучше всего умею записывать на наши прекрасные процедуры. Могу я вам с этим помочь?\n\n"

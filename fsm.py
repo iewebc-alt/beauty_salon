@@ -7,3 +7,4 @@ class AppointmentStates(StatesGroup):
     choosing_date = State()
     choosing_time = State()
     confirmation = State()
+    awaiting_contact = State() # <-- ДОБАВЬТЕ ЭТУ СТРОКУ

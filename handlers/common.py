@@ -1,6 +1,4 @@
-# handlers/common.py - Здесь будут обработчики общих команд, 
-# таких как /start, /cancel, а также обработка контактов и сообщений, 
-# не попавших в другие хендлеры.
+# handlers/common.py
 from aiogram import Router, types, F, Bot
 from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -27,79 +25,126 @@ async def cmd_start(message: types.Message, state: FSMContext):
         "Чем могу быть полезна?\n"
         "/book - Записаться на процедуру 💅\n"
         "/my_appointments - Посмотреть ваши записи 🗓️\n"
-        "/cancel - Отменить текущее действие"
+        "/cancel - Отменить текущее действие",
+        reply_markup=types.ReplyKeyboardRemove()
     )
 
 @router.message(Command("cancel"))
 async def cancel_handler(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is None:
-        await message.answer("Сейчас нет активного процесса записи, который можно было бы отменить. 😊")
+        await message.answer("Сейчас нет активного процесса, который можно было бы отменить. 😊")
         return
     await state.clear()
-    await message.answer("Хорошо, я всё отменила. Давайте начнем заново, если хотите! /book")
+    await message.answer(
+        "Хорошо, я всё отменила. Давайте начнем заново, если хотите! /book",
+        reply_markup=types.ReplyKeyboardRemove()
+    )
 
-@router.message(F.contact)
-async def handle_contact(message: types.Message):
+@router.message(F.contact, StateFilter(AppointmentStates.awaiting_contact, None))
+async def handle_contact(message: types.Message, state: FSMContext):
     try:
         await api_client.update_client_phone(message.from_user.id, message.contact.phone_number)
         await message.answer("Спасибо! Сохранила ваш номер телефона. Теперь мы сможем с вами связаться, если что-то изменится. 😊", reply_markup=types.ReplyKeyboardRemove())
-    except httpx.HTTPStatusError as e:
-        logging.error(f"HTTP Error updating phone: {e.response.status_code} - {e.response.text}")
-        await message.answer(f"Простите, не удалось сохранить ваш номер телефона из-за технической ошибки (код {e.response.status_code}). Попробуйте, пожалуйста, еще раз. 🙏")
-    except httpx.RequestError as e:
-        logging.error(f"Request Error updating phone: {e}")
-        await message.answer("Простите, не удалось сохранить ваш номер телефона из-за проблем с подключением. Попробуйте, пожалуйста, еще раз. 🙏")
-    except Exception as e:
-        logging.error(f"Unexpected error updating phone: {e}")
-        await message.answer("Простите, произошла непредвиденная ошибка при сохранении номера телефона. Попробуйте, пожалуйста, еще раз. 🙏")
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        await message.answer("Простите, не удалось сохранить ваш номер телефона из-за технической ошибки. Попробуйте, пожалуйста, еще раз. 🙏")
+    finally:
+        await state.clear()
+
+# --- НАЧАЛО ИЗМЕНЕНИЙ ---
+@router.message(F.text, StateFilter(AppointmentStates.awaiting_contact))
+async def handle_contact_rejection(message: types.Message, state: FSMContext):
+    """
+    Этот хендлер ловит текстовые ответы в состоянии, когда бот ожидает номер телефона.
+    Теперь он умеет отвечать на вопросы и переспрашивать, если не понял.
+    """
+    text = message.text.lower()
+    negative_responses = ['нет', 'не', 'не хочу', 'отказ', 'позже']
+    question_responses = ['зачем', 'почему', 'для чего']
+
+    # Создаем клавиатуру, которую будем показывать при необходимости
+    keyboard = types.ReplyKeyboardMarkup(
+        keyboard=[[types.KeyboardButton(text="📱 Поделиться контактом", request_contact=True)]],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
+    if any(word in text for word in negative_responses):
+        await message.answer(
+            "Хорошо, без проблем! Ваша запись уже подтверждена. Если что-то изменится, Вы всегда можете написать нам здесь. До встречи в «Элеганс»! ✨",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+        await state.clear()
+    
+    elif any(word in text for word in question_responses):
+        await message.answer(
+            "Мы просим номер телефона, чтобы администратор мог оперативно связаться с Вами в случае непредвиденных изменений в расписании мастера (например, если мастер заболел). Это помогает избежать недоразумений и вовремя предложить Вам альтернативу. 😊",
+            reply_markup=keyboard # Показываем кнопку снова
+        )
+
+    else:
+        await message.answer(
+            "Я не совсем понял(а). Пожалуйста, либо поделитесь контактом с помощью кнопки ниже, либо просто напишите 'нет', если не хотите этого делать.",
+            reply_markup=keyboard # Показываем кнопку снова
+        )
+# --- КОНЕЦ ИЗМЕНЕНИЙ ---
 
 @router.message(F.text, StateFilter(AppointmentStates))
 async def handle_text_while_in_state(message: types.Message, bot: Bot):
-    await bot.send_chat_action(message.chat.id, 'typing')
-    # Здесь можно будет тоже подключить Gemini с памятью, если понадобится
     await message.answer("Пожалуйста, используйте кнопки для выбора или введите /cancel для отмены.")
 
 @router.message(StateFilter(None))
 async def handle_unhandled_content(message: types.Message, state: FSMContext, bot: Bot):
-    await bot.send_chat_action(message.chat.id, 'typing')
+    msg = None
+    try:
+        msg = await message.answer("Думаю...")
+        gemini_response = await gemini_client.handle_natural_language(
+            state=state,
+            user_message=message.text,
+            user_name=message.from_user.full_name
+        )
 
-    gemini_response = await gemini_client.generate_response_or_tool_call(
-        state=state, # <--- ИСПРАВЛЕНИЕ ЗДЕСЬ
-        user_message=message.text,
-        user_name=message.from_user.full_name
-    )
-
-    if gemini_response['type'] == 'text':
-        await message.answer(gemini_response['content'])
-
-    elif gemini_response['type'] == 'tool_call':
-        tool_name = gemini_response['name']
-        tool_args = gemini_response['args']
-
-        if tool_name == 'create_appointment':
-            payload = {
-                "telegram_user_id": message.from_user.id,
-                "user_name": message.from_user.full_name,
-                **tool_args
-            }
-            
-            try:
-                api_response = await api_client.create_natural_appointment(payload)
-                dt_object = datetime.fromisoformat(api_response['start_time'])
-                formatted_datetime = dt_object.strftime('%d %B в %H:%M')
-                
-                await message.answer(
-                    f"🎉 Отлично! Я успешно записал(а) Вас.\n\n"
-                    f"**Услуга:** {api_response['service_name']}\n"
-                    f"**Мастер:** {api_response['master_name']}\n"
-                    f"**Когда:** {formatted_datetime}\n\n"
-                    f"Будем ждать Вас в «Элеганс»!",
-                    parse_mode="Markdown"
-                )
-            except httpx.HTTPStatusError as e:
-                error_detail = e.response.json().get("detail", "Неизвестная ошибка API.")
-                await message.answer(f"😔 Не удалось создать запись. Причина: {error_detail}")
-            except Exception as e:
-                logging.error(f"Непредвиденная ошибка при вызове API: {e}")
-                await message.answer("😔 Простите, произошла непредвиденная ошибка при создании записи.")
+        if gemini_response['type'] == 'text':
+            await bot.edit_message_text(
+                text=gemini_response['content'],
+                chat_id=message.chat.id,
+                message_id=msg.message_id
+            )
+        elif gemini_response['type'] == 'error':
+            await bot.edit_message_text(
+                text=gemini_response['content'],
+                chat_id=message.chat.id,
+                message_id=msg.message_id
+            )
+        elif gemini_response['type'] == 'tool_call':
+            await bot.delete_message(chat_id=message.chat.id, message_id=msg.message_id)
+            tool_name = gemini_response['name']
+            tool_args = gemini_response['args']
+            if tool_name == 'create_appointment':
+                payload = {"telegram_user_id": message.from_user.id, "user_name": message.from_user.full_name, **tool_args}
+                try:
+                    api_response = await api_client.create_natural_appointment(payload)
+                    dt_object = datetime.fromisoformat(api_response['start_time'])
+                    formatted_datetime = dt_object.strftime('%d %B в %H:%M')
+                    await message.answer(
+                        f"🎉 Отлично! Я успешно записал(а) Вас.\n\n"
+                        f"**Услуга:** {api_response['service_name']}\n"
+                        f"**Мастер:** {api_response['master_name']}\n"
+                        f"**Когда:** {formatted_datetime}\n\n"
+                        f"Будем ждать Вас в «Элеганс»!",
+                        parse_mode="Markdown"
+                    )
+                except httpx.HTTPStatusError as e:
+                    error_detail = e.response.json().get("detail", "Неизвестная ошибка API.")
+                    await message.answer(f"😔 Не удалось создать запись. Причина: {error_detail}\n\nПожалуйста, попробуйте еще раз или воспользуйтесь стандартной записью: /book")
+                except Exception as e:
+                    logging.error(f"Непредвиденная ошибка при вызове API: {e}")
+                    await message.answer("😔 Простите, произошла непредвиденная ошибка. Пожалуйста, воспользуйтесь стандартной записью: /book")
+    except Exception as e:
+        logging.error(f"Критическая ошибка в хендлере: {e}")
+        if msg:
+            await bot.edit_message_text(
+                text="😔 Простите, в боте произошла критическая ошибка. Мы уже работаем над этим.",
+                chat_id=message.chat.id,
+                message_id=msg.message_id
+            )

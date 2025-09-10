@@ -39,7 +39,8 @@ else:
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         # --- ИЗМЕНЕНИЕ ЗДЕСЬ: используем более стабильное имя модели ---
-        gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        #gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        gemini_model = genai.GenerativeModel('ggemini-2.5-flash')
         logging.info("Модель Gemini успешно инициализирована.")
     except Exception as e:
         logging.error(f"Не удалось инициализировать Gemini: {e}")
@@ -358,11 +359,69 @@ async def back_to_master(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(StateFilter(AppointmentStates.choosing_time), F.data == "back_to_date")
 async def back_to_date(callback: types.CallbackQuery, state: FSMContext):
-    await master_selected_show_calendar(callback, state)
+    # --- НАЧАЛО ИСПРАВЛЕННОГО БЛОКА ---
+    await state.set_state(AppointmentStates.choosing_date)
+    user_data = await state.get_data()
+
+    # Восстанавливаем год и месяц из сохраненной даты
+    selected_date = date.fromisoformat(user_data['selected_date'])
+    year, month = selected_date.year, selected_date.month
+
+    try:
+        params = {"service_id": user_data['service_id'], "year": year, "month": month}
+        if user_data.get('master_id'):
+            params["master_id"] = user_data['master_id']
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{API_URL}/api/v1/active-days-in-month", params=params)
+            response.raise_for_status()
+        active_days = set(response.json())
+    except:
+        active_days = set()
+
+    # Генерируем календарь для нужного месяца
+    calendar_kb = create_calendar_keyboard(year, month, active_days)
+    back_button = types.InlineKeyboardButton(text="◀️ Назад к мастерам", callback_data="back_to_master")
+    calendar_kb.inline_keyboard.append([back_button])
+    
+    await callback.message.edit_text("Хорошо, давайте выберем другую дату: 🗓️", reply_markup=calendar_kb)
+    await callback.answer()
+    # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
 
 @dp.callback_query(StateFilter(AppointmentStates.confirmation), F.data == "back_to_time")
 async def back_to_time(callback: types.CallbackQuery, state: FSMContext):
-    await process_date_selected(callback, state)
+    # --- НАЧАЛО ИСПРАВЛЕННОГО БЛОКА ---
+    await state.set_state(AppointmentStates.choosing_time)
+    user_data = await state.get_data()
+    
+    # Мы уже знаем дату, она сохранена в state. Просто запрашиваем слоты для неё.
+    params = {
+        "service_id": user_data['service_id'], 
+        "selected_date": user_data['selected_date']
+    }
+    if user_data.get('master_id'):
+        params["master_id"] = user_data['master_id']
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{API_URL}/api/v1/available-slots", params=params)
+            response.raise_for_status()
+        slots = response.json()
+        
+        builder = InlineKeyboardBuilder()
+        time_buttons = [types.InlineKeyboardButton(text=slot['time'], callback_data=f"time_select:{slot['time']}:{slot['master_id']}") for slot in slots]
+        builder.add(*time_buttons)
+        builder.row(types.InlineKeyboardButton(text="◀️ Назад к датам", callback_data="back_to_date"))
+        builder.adjust(4)
+        
+        await callback.message.edit_text("Выберите удобное время:", reply_markup=builder.as_markup())
+    except Exception as e:
+        logging.error(f"Ошибка в back_to_time: {e}")
+        await callback.message.edit_text("😔 Ошибка при возврате к выбору времени. Попробуйте отменить /cancel и начать заново.")
+        await state.clear()
+    
+    await callback.answer()
+    # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
 
 # --- Финал ---
 @dp.callback_query(AppointmentStates.confirmation, F.data == "confirm_booking")

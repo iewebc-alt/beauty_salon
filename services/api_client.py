@@ -65,4 +65,26 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    # --- ДОБАВЬТЕ ЭТИ ДВА НОВЫХ МЕТОДА ---
+    async def get_salon_info(self) -> Dict[str, Any]:
+        response = await self.client.get("/api/v1/salon-info")
+        response.raise_for_status()
+        return response.json()
+
+    async def check_availability(self, service_name: str, appointment_date: str) -> List[Dict[str, Any]]:
+        # Найдем ID услуги по имени для вызова существующего эндпоинта
+        all_services_resp = await self.get_services()
+        service_id = None
+        for service in all_services_resp:
+            if service['name'].lower() in service_name.lower():
+                service_id = service['id']
+                break
+        if not service_id:
+            return [] # Возвращаем пустой список, если услуга не найдена
+
+        params = {"service_id": service_id, "selected_date": appointment_date}
+        response = await self.client.get("/api/v1/available-slots", params=params)
+        response.raise_for_status()
+        return response.json()
+
 api_client = ApiClient(API_URL)

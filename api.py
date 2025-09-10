@@ -61,6 +61,22 @@ class AppointmentNaturalLanguageSchema(BaseModel):
     appointment_date: str  # Ожидаем формат "YYYY-MM-DD"
     appointment_time: str  # Ожидаем формат "HH:MM"
     master_name: Optional[str] = None
+# --- ДОБАВЬТЕ ЭТИ НОВЫЕ СХЕМЫ В РАЗДЕЛ PYDANTIC ---
+class SimpleServiceSchema(BaseModel):
+    name: str
+    price: int
+    duration_minutes: int
+    class Config: from_attributes = True
+
+class SimpleMasterSchema(BaseModel):
+    name: str
+    specialization: str
+    services: list[str]
+    class Config: from_attributes = True
+
+class SalonInfoSchema(BaseModel):
+    services: list[SimpleServiceSchema]
+    masters: list[SimpleMasterSchema]
 
 # --- Dependency БД ---
 def get_db():
@@ -219,6 +235,22 @@ def update_client_phone(telegram_user_id: int, client_data: ClientUpdateSchema, 
 @app.post("/api/v1/appointments/natural")
 def create_appointment_from_natural_language(request: AppointmentNaturalLanguageSchema, db: Session = Depends(get_db)):
     logging.info(f"Received natural language appointment request: {request.dict()}")
+
+# --- ДОБАВЬТЕ ЭТОТ НОВЫЙ ЭНДПОИНТ ДЛЯ ПОЛУЧЕНИЯ ИНФОРМАЦИИ ---
+@app.get("/api/v1/salon-info", response_model=SalonInfoSchema)
+def get_salon_information(db: Session = Depends(get_db)):
+    services = db.query(models.Service).all()
+    masters_raw = db.query(models.Master).options(joinedload(models.Master.services)).all()
+    
+    masters_processed = [
+        {
+            "name": master.name,
+            "specialization": master.specialization,
+            "services": [s.name for s in master.services]
+        } for master in masters_raw
+    ]
+    
+    return {"services": services, "masters": masters_processed}
 
     # 1. Находим клиента или создаем нового
     client = db.query(models.Client).filter(models.Client.telegram_user_id == request.telegram_user_id).first()

@@ -29,17 +29,31 @@ async def cmd_start(message: types.Message, state: FSMContext):
         reply_markup=types.ReplyKeyboardRemove()
     )
 
+# --- НАЧАЛО ИЗМЕНЕНИЙ ---
 @router.message(Command("cancel"))
 async def cancel_handler(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
+    
     if current_state is None:
         await message.answer("Сейчас нет активного процесса, который можно было бы отменить. 😊")
         return
-    await state.clear()
-    await message.answer(
-        "Хорошо, я всё отменила. Давайте начнем заново, если хотите! /book",
-        reply_markup=types.ReplyKeyboardRemove()
-    )
+
+    # Проверяем, в каком именно состоянии мы находимся
+    if current_state == AppointmentStates.awaiting_contact:
+        # Если мы просто ждем контакт, запись уже создана. Отменять нечего.
+        await state.clear()
+        await message.answer(
+            "Хорошо, понял(а) Вас. Ваша запись уже подтверждена. Если захотите ее отменить, воспользуйтесь командой /my_appointments. ✨",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+    else:
+        # Если мы в процессе записи, то отменяем его
+        await state.clear()
+        await message.answer(
+            "Хорошо, я всё отменила. Давайте начнем заново, если хотите! /book",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+# --- КОНЕЦ ИЗМЕНЕНИЙ ---
 
 @router.message(F.contact, StateFilter(AppointmentStates.awaiting_contact, None))
 async def handle_contact(message: types.Message, state: FSMContext):
@@ -51,18 +65,12 @@ async def handle_contact(message: types.Message, state: FSMContext):
     finally:
         await state.clear()
 
-# --- НАЧАЛО ИЗМЕНЕНИЙ ---
 @router.message(F.text, StateFilter(AppointmentStates.awaiting_contact))
 async def handle_contact_rejection(message: types.Message, state: FSMContext):
-    """
-    Этот хендлер ловит текстовые ответы в состоянии, когда бот ожидает номер телефона.
-    Теперь он умеет отвечать на вопросы и переспрашивать, если не понял.
-    """
     text = message.text.lower()
     negative_responses = ['нет', 'не', 'не хочу', 'отказ', 'позже']
     question_responses = ['зачем', 'почему', 'для чего']
 
-    # Создаем клавиатуру, которую будем показывать при необходимости
     keyboard = types.ReplyKeyboardMarkup(
         keyboard=[[types.KeyboardButton(text="📱 Поделиться контактом", request_contact=True)]],
         resize_keyboard=True,
@@ -79,15 +87,14 @@ async def handle_contact_rejection(message: types.Message, state: FSMContext):
     elif any(word in text for word in question_responses):
         await message.answer(
             "Мы просим номер телефона, чтобы администратор мог оперативно связаться с Вами в случае непредвиденных изменений в расписании мастера (например, если мастер заболел). Это помогает избежать недоразумений и вовремя предложить Вам альтернативу. 😊",
-            reply_markup=keyboard # Показываем кнопку снова
+            reply_markup=keyboard
         )
 
     else:
         await message.answer(
             "Я не совсем понял(а). Пожалуйста, либо поделитесь контактом с помощью кнопки ниже, либо просто напишите 'нет', если не хотите этого делать.",
-            reply_markup=keyboard # Показываем кнопку снова
+            reply_markup=keyboard
         )
-# --- КОНЕЦ ИЗМЕНЕНИЙ ---
 
 @router.message(F.text, StateFilter(AppointmentStates))
 async def handle_text_while_in_state(message: types.Message, bot: Bot):

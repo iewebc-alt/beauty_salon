@@ -54,6 +54,13 @@ class ClientUpdateSchema(BaseModel):
     phone_number: str
 class AvailableSlotSchema(BaseModel):
     time: str; master_id: int
+class AppointmentNaturalLanguageSchema(BaseModel):
+    telegram_user_id: int
+    user_name: str
+    service_name: str
+    appointment_date: str  # Ожидаем формат "YYYY-MM-DD"
+    appointment_time: str  # Ожидаем формат "HH:MM"
+    master_name: Optional[str] = None
 
 # --- Dependency БД ---
 def get_db():
@@ -207,3 +214,72 @@ def update_client_phone(telegram_user_id: int, client_data: ClientUpdateSchema, 
     if not client: raise HTTPException(status_code=404, detail="Client not found")
     client.phone_number = client_data.phone_number; db.commit()
     return {"message": "Phone number updated successfully"}
+
+# --- ДОБАВЬТЕ ЭТОТ НОВЫЙ ЭНДПОИНТ ---
+@app.post("/api/v1/appointments/natural")
+def create_appointment_from_natural_language(request: AppointmentNaturalLanguageSchema, db: Session = Depends(get_db)):
+    logging.info(f"Received natural language appointment request: {request.dict()}")
+
+    # 1. Находим клиента или создаем нового
+    client = db.query(models.Client).filter(models.Client.telegram_user_id == request.telegram_user_id).first()
+    if not client:
+        client = models.Client(telegram_user_id=request.telegram_user_id, name=request.user_name)
+        db.add(client)
+        db.commit()
+        db.refresh(client)
+
+    # 2. Находим услугу по названию (гибкий поиск)
+    # Ищем частичное совпадение без учета регистра
+    service = db.query(models.Service).filter(models.Service.name.ilike(f"%{request.service_name}%")).first()
+    if not service:
+        raise HTTPException(status_code=404, detail=f"Услуга '{request.service_name}' не найдена.")
+
+    # 3. Находим мастера (если имя предоставлено)
+    master = None
+    if request.master_name:
+        master = db.query(models.Master).filter(models.Master.name.ilike(f"%{request.master_name}%")).first()
+        if not master:
+            raise HTTPException(status_code=404, detail=f"Мастер '{request.master_name}' не найден.")
+    else:
+        # Если мастер не указан, берем первого попавшегося, кто выполняет эту услугу
+        master = db.query(models.Master).join(models.Master.services).filter(models.Service.id == service.id).first()
+        if not master:
+            raise HTTPException(status_code=404, detail=f"Для услуги '{service.name}' не найдено ни одного мастера.")
+
+    # 4. Собираем дату и время
+    try:
+        start_time = datetime.strptime(f"{request.appointment_date} {request.appointment_time}", "%Y-%m-%d %H:%M")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Неверный формат даты или времени. Используйте YYYY-MM-DD и HH:MM.")
+    
+    end_time = start_time + timedelta(minutes=service.duration_minutes)
+
+    # 5. Проверяем на конфликты
+    conflicting = db.query(models.Appointment).filter(
+        models.Appointment.master_id == master.id,
+        models.Appointment.start_time < end_time,
+        models.Appointment.end_time > start_time
+    ).count()
+
+    if conflicting > 0:
+        raise HTTPException(status_code=409, detail="Это время уже занято. Пожалуйста, выберите другое.")
+
+    # 6. Создаем запись
+    new_appointment = models.Appointment(
+        client_id=client.id,
+        master_id=master.id,
+        service_id=service.id,
+        start_time=start_time,
+        end_time=end_time
+    )
+    db.add(new_appointment)
+    db.commit()
+    db.refresh(new_appointment)
+
+    return {
+        "message": "Запись успешно создана!",
+        "appointment_id": new_appointment.id,
+        "start_time": new_appointment.start_time.isoformat(),
+        "master_name": master.name,
+        "service_name": service.name
+    }

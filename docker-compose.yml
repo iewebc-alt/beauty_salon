@@ -4,27 +4,35 @@ services:
     container_name: salon_postgres_db
     volumes:
       - postgres_data:/var/lib/postgresql/data/
-    # Docker Compose автоматически прочитает .env файл и подставит переменные
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
-    # --- ДОБАВЬТЕ ЭТОТ БЛОК ---
     ports:
       - "5432:5432"
-    # --- КОНЕЦ БЛОКА ---
-
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks: # <--- ДОБАВЛЕНО
+      - salon_network
+
+  # --- ДОБАВЛЕН СЕРВИС REDIS ---
+  redis:
+    image: redis:7-alpine
+    container_name: salon_redis
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - salon_network
 
   api:
     build: .
     container_name: salon_api_service
-    command: uvicorn api:app --host 0.0.0.0 --port 8000 --reload 
+    command: uvicorn api:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app
     ports:
@@ -32,25 +40,35 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # Указываем Docker'у использовать наш .env файл для этого сервиса
     env_file:
       - .env
     environment:
-      - RUNNING_IN_DOCKER=1 # <--- ДОБАВЬТЕ ЭТУ СТРОКУ
+      - RUNNING_IN_DOCKER=1
     restart: unless-stopped
-  
+    networks: # <--- ДОБАВЛЕНО
+      - salon_network
+
   bot:
     build: .
     container_name: salon_telegram_bot
     command: python3 bot.py
     volumes:
       - .:/app
+    # --- ИЗМЕНЕН БЛОК ЗАВИСИМОСТЕЙ ---
     depends_on:
       - api
-    # И для этого тоже
+      - redis
     env_file:
       - .env
     restart: unless-stopped
+    networks: # <--- ДОБАВЛЕНО
+      - salon_network
 
 volumes:
   postgres_data:
+  redis_data: # <--- ДОБАВЛЕНО
+
+# --- ДОБАВЛЕНА ОБЩАЯ СЕТЬ ДЛЯ ВСЕХ СЕРВИСОВ ---
+networks:
+  salon_network:
+    driver: bridge

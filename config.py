@@ -27,3 +27,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # --- Админка ---
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+
+# --- Redis ---
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))

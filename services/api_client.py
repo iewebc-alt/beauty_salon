@@ -59,4 +59,10 @@ class ApiClient:
         response = await self.client.patch(f"/api/v1/clients/{telegram_user_id}", json=payload)
         response.raise_for_status()
 
+# --- ДОБАВЬТЕ ЭТОТ НОВЫЙ МЕТОД В КОНЕЦ КЛАССА ---
+    async def create_natural_appointment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        response = await self.client.post("/api/v1/appointments/natural", json=payload)
+        response.raise_for_status()
+        return response.json()
+
 api_client = ApiClient(API_URL)

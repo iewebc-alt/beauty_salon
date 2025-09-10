@@ -4,25 +4,30 @@ import logging
 import locale
 
 from aiogram import Bot, Dispatcher, types
+# --- НОВЫЕ ИМПОРТЫ ---
+from aiogram.fsm.storage.redis import RedisStorage
+from redis.asyncio.client import Redis
 
-from config import BOT_TOKEN
+# --- ИЗМЕНЯЕМ ИМПОРТ CONFIG ---
+from config import BOT_TOKEN, REDIS_HOST, REDIS_PORT
 from handlers import common, appointments, booking
 
-# --- Настройка логгирования ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
 
 async def main():
     bot = Bot(token=BOT_TOKEN)
-    dp = Dispatcher()
+    
+    # --- НАСТРОЙКА REDIS STORAGE ---
+    redis_client = Redis(host=REDIS_HOST, port=REDIS_PORT)
+    storage = RedisStorage(redis=redis_client)
+    
+    # --- ПЕРЕДАЕМ STORAGE В ДИСПЕТЧЕР ---
+    dp = Dispatcher(storage=storage)
 
-    # Подключаем роутеры из других файлов
     dp.include_router(booking.router)
     dp.include_router(appointments.router)
-    # Роутер с "общими" командами должен быть последним,
-    # так как он содержит обработчики, которые "ловят" все остальные сообщения.
     dp.include_router(common.router)
 
-    # Установка команд меню
     await bot.set_my_commands([
         types.BotCommand(command="start", description="Начало работы"),
         types.BotCommand(command="book", description="Записаться на услугу"),
@@ -30,14 +35,11 @@ async def main():
         types.BotCommand(command="cancel", description="Отменить действие"),
     ])
 
-    # Запуск поллинга
-    # Удаляем необработанные обновления, чтобы бот не отвечал на старые сообщения
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
-        # Устанавливаем русскую локаль для корректного отображения месяцев
         locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')
     except locale.Error:
         logging.warning("Локаль ru_RU.UTF-8 не найдена, месяцы могут отображаться на английском.")

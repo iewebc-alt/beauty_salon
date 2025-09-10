@@ -2,11 +2,11 @@
 # таких как /start, /cancel, а также обработка контактов и сообщений, 
 # не попавших в другие хендлеры.
 from aiogram import Router, types, F, Bot
-# --- ДОБАВЛЕНА ЭТА СТРОКА ---
 from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 import httpx
-import logging # Добавим логирование для отладки
+import logging
+from datetime import datetime
 
 from fsm import AppointmentStates
 from services.api_client import api_client
@@ -57,11 +57,49 @@ async def handle_contact(message: types.Message):
 @router.message(F.text, StateFilter(AppointmentStates))
 async def handle_text_while_in_state(message: types.Message, bot: Bot):
     await bot.send_chat_action(message.chat.id, 'typing')
-    response_text = await gemini_client.generate_fsm_response(message.text)
-    await message.answer(response_text)
+    # Здесь можно будет тоже подключить Gemini с памятью, если понадобится
+    await message.answer("Пожалуйста, используйте кнопки для выбора или введите /cancel для отмены.")
 
 @router.message(StateFilter(None))
-async def handle_unhandled_content(message: types.Message, bot: Bot):
+async def handle_unhandled_content(message: types.Message, state: FSMContext, bot: Bot):
     await bot.send_chat_action(message.chat.id, 'typing')
-    response_text = await gemini_client.generate_unhandled_response(message.text)
-    await message.answer(response_text)
+
+    gemini_response = await gemini_client.generate_response_or_tool_call(
+        state=state, # <--- ИСПРАВЛЕНИЕ ЗДЕСЬ
+        user_message=message.text,
+        user_name=message.from_user.full_name
+    )
+
+    if gemini_response['type'] == 'text':
+        await message.answer(gemini_response['content'])
+
+    elif gemini_response['type'] == 'tool_call':
+        tool_name = gemini_response['name']
+        tool_args = gemini_response['args']
+
+        if tool_name == 'create_appointment':
+            payload = {
+                "telegram_user_id": message.from_user.id,
+                "user_name": message.from_user.full_name,
+                **tool_args
+            }
+            
+            try:
+                api_response = await api_client.create_natural_appointment(payload)
+                dt_object = datetime.fromisoformat(api_response['start_time'])
+                formatted_datetime = dt_object.strftime('%d %B в %H:%M')
+                
+                await message.answer(
+                    f"🎉 Отлично! Я успешно записал(а) Вас.\n\n"
+                    f"**Услуга:** {api_response['service_name']}\n"
+                    f"**Мастер:** {api_response['master_name']}\n"
+                    f"**Когда:** {formatted_datetime}\n\n"
+                    f"Будем ждать Вас в «Элеганс»!",
+                    parse_mode="Markdown"
+                )
+            except httpx.HTTPStatusError as e:
+                error_detail = e.response.json().get("detail", "Неизвестная ошибка API.")
+                await message.answer(f"😔 Не удалось создать запись. Причина: {error_detail}")
+            except Exception as e:
+                logging.error(f"Непредвиденная ошибка при вызове API: {e}")
+                await message.answer("😔 Простите, произошла непредвиденная ошибка при создании записи.")

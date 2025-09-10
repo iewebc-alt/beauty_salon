@@ -55,3 +55,4 @@ class Appointment(Base):
     client = relationship("Client", back_populates="appointments")
     master = relationship("Master", back_populates="appointments")
     service = relationship("Service", back_populates="appointments")
+

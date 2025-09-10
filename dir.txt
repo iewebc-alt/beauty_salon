@@ -1,0 +1,19 @@
+.
+├── api.py
+├── bot.py                 # <--- Главный запускаемый файл
+├── config.py
+├── database.py
+├── fsm.py                 # <--- Определение состояний FSM
+├── keyboards.py           # <--- Функции для создания клавиатур
+├── models.py
+├── requirements.txt
+├── .env
+├── handlers/
+│   ├── __init__.py
+│   ├── booking.py         # <--- Вся логика процесса записи (FSM)
+│   ├── appointments.py    # <--- Логика просмотра и отмены записей
+│   └── common.py          # <--- Общие команды (start, cancel) и обработчики
+└── services/
+    ├── __init__.py
+    ├── api_client.py      # <--- Модуль для взаимодействия с вашим API
+    └── gemini.py          # <--- Модуль для работы с Gemini AI

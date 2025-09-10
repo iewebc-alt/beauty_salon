@@ -165,11 +165,8 @@ def get_active_days(service_id: int, year: int, month: int, master_id: Optional[
             active_days.append(day)
     return active_days
 
-# ... (остальные эндпоинты без изменений)
-
 @app.post("/api/v1/appointments")
 def create_appointment(appointment: AppointmentCreateSchema, db: Session = Depends(get_db)):
-    # ... (код без изменений)
     logging.info(f"Received appointment request: {appointment.dict()}")
     client = db.query(models.Client).filter(models.Client.telegram_user_id == appointment.telegram_user_id).first()
     if not client:
@@ -188,7 +185,6 @@ def create_appointment(appointment: AppointmentCreateSchema, db: Session = Depen
 
 @app.get("/api/v1/clients/{telegram_user_id}/appointments", response_model=List[AppointmentInfoSchema])
 def get_client_appointments(telegram_user_id: int, db: Session = Depends(get_db)):
-    # ... (код без изменений)
     client = db.query(models.Client).filter(models.Client.telegram_user_id == telegram_user_id).first()
     if not client: return []
     now = datetime.utcnow()
@@ -200,7 +196,6 @@ def get_client_appointments(telegram_user_id: int, db: Session = Depends(get_db)
 
 @app.delete("/api/v1/appointments/{appointment_id}")
 def delete_appointment(appointment_id: int, db: Session = Depends(get_db)):
-    # ... (код без изменений)
     appointment = db.query(models.Appointment).filter(models.Appointment.id == appointment_id).first()
     if not appointment: raise HTTPException(status_code=404, detail="Appointment not found")
     db.delete(appointment); db.commit()
@@ -208,7 +203,6 @@ def delete_appointment(appointment_id: int, db: Session = Depends(get_db)):
 
 @app.patch("/api/v1/clients/{telegram_user_id}")
 def update_client_phone(telegram_user_id: int, client_data: ClientUpdateSchema, db: Session = Depends(get_db)):
-    # ... (код без изменений)
     client = db.query(models.Client).filter(models.Client.telegram_user_id == telegram_user_id).first()
     if not client: raise HTTPException(status_code=404, detail="Client not found")
     client.phone_number = client_data.phone_number; db.commit()

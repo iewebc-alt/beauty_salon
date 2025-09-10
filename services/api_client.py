@@ -1,4 +1,4 @@
-# services/api_client.py - Создадим специальный модуль, который будет отвечать за все запросы к вашему FastAPI бэкенду. Это изолирует логику работы с API от логики бота.
+# services/api_client.py
 import httpx
 from typing import List, Optional, Dict, Any
 from datetime import date
@@ -24,16 +24,25 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
-    async def get_active_days(self, service_id: int, year: int, month: int, master_id: Optional[int] = None) -> List[int]:
-        params = {"service_id": service_id, "year": year, "month": month}
+    async def get_active_days(self, service_id: int, year: int, month: int, telegram_user_id: int, master_id: Optional[int] = None) -> List[int]:
+        params = {
+            "service_id": service_id,
+            "year": year,
+            "month": month,
+            "telegram_user_id": telegram_user_id
+        }
         if master_id:
             params["master_id"] = master_id
         response = await self.client.get("/api/v1/active-days-in-month", params=params)
         response.raise_for_status()
         return response.json()
 
-    async def get_available_slots(self, service_id: int, selected_date: str, master_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        params = {"service_id": service_id, "selected_date": selected_date}
+    async def get_available_slots(self, service_id: int, selected_date: str, telegram_user_id: int, master_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        params = {
+            "service_id": service_id,
+            "selected_date": selected_date,
+            "telegram_user_id": telegram_user_id
+        }
         if master_id:
             params["master_id"] = master_id
         response = await self.client.get("/api/v1/available-slots", params=params)
@@ -59,20 +68,12 @@ class ApiClient:
         response = await self.client.patch(f"/api/v1/clients/{telegram_user_id}", json=payload)
         response.raise_for_status()
 
-# --- ДОБАВЬТЕ ЭТОТ НОВЫЙ МЕТОД В КОНЕЦ КЛАССА ---
-    async def create_natural_appointment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        response = await self.client.post("/api/v1/appointments/natural", json=payload)
-        response.raise_for_status()
-        return response.json()
-
-    # --- ДОБАВЬТЕ ЭТИ ДВА НОВЫХ МЕТОДА ---
     async def get_salon_info(self) -> Dict[str, Any]:
         response = await self.client.get("/api/v1/salon-info")
         response.raise_for_status()
         return response.json()
 
     async def check_availability(self, service_name: str, appointment_date: str) -> List[Dict[str, Any]]:
-        # Найдем ID услуги по имени для вызова существующего эндпоинта
         all_services_resp = await self.get_services()
         service_id = None
         for service in all_services_resp:
@@ -80,10 +81,18 @@ class ApiClient:
                 service_id = service['id']
                 break
         if not service_id:
-            return [] # Возвращаем пустой список, если услуга не найдена
+            return []
 
-        params = {"service_id": service_id, "selected_date": appointment_date}
+        # Примечание: check_availability используется AI, у которого нет telegram_user_id.
+        # Для этой функции мы можем использовать "заглушку", например 0,
+        # так как AI просто проверяет общую доступность, а не для конкретного клиента.
+        params = {"service_id": service_id, "selected_date": appointment_date, "telegram_user_id": 0}
         response = await self.client.get("/api/v1/available-slots", params=params)
+        response.raise_for_status()
+        return response.json()
+        
+    async def create_natural_appointment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        response = await self.client.post("/api/v1/appointments/natural", json=payload)
         response.raise_for_status()
         return response.json()
 

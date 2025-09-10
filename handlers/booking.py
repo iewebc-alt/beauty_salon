@@ -1,10 +1,9 @@
-# handlers/booking.py - Самый большой файл, который содержит всю логику конечного
-#  автомата (FSM) для процесса записи.
+# handlers/booking.py
 from aiogram import Router, types, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from datetime import date
+from datetime import date, datetime, timezone
 import httpx
 import logging
 
@@ -25,7 +24,10 @@ async def start_booking(message: types.Message, state: FSMContext):
         for service in services:
             builder.button(text=f"{service['name']} ({service['price']} руб.)", callback_data=f"service_select:{service['id']}:{service['name']}:{service['price']}")
         builder.adjust(1)
-        await message.answer("Какую процедуру для вашей красоты выберем сегодня? ✨", reply_markup=builder.as_markup())
+        await message.answer(
+            "Какую процедуру для вашей красоты выберем сегодня? ✨",
+            reply_markup=builder.as_markup()
+        )
     except (httpx.RequestError, httpx.HTTPStatusError):
         await message.answer("Ой, не могу сейчас загрузить список наших прекрасных услуг. Попробуйте, пожалуйста, через минутку! 😔")
         await state.clear()
@@ -67,7 +69,13 @@ async def master_selected_show_calendar(callback: types.CallbackQuery, state: FS
     today = date.today()
     user_data = await state.get_data()
     try:
-        active_days = await api_client.get_active_days(user_data['service_id'], today.year, today.month, master_id)
+        active_days = await api_client.get_active_days(
+            service_id=user_data['service_id'],
+            year=today.year,
+            month=today.month,
+            telegram_user_id=callback.from_user.id,
+            master_id=master_id
+        )
         calendar_kb = create_calendar_keyboard(today.year, today.month, set(active_days))
         back_button = types.InlineKeyboardButton(text="◀️ Назад к мастерам", callback_data="back_to_master")
         calendar_kb.inline_keyboard.append([back_button])
@@ -86,7 +94,12 @@ async def process_date_selected(callback: types.CallbackQuery, state: FSMContext
     await state.update_data(selected_date=selected_date.isoformat())
     user_data = await state.get_data()
     try:
-        slots = await api_client.get_available_slots(user_data['service_id'], selected_date.isoformat(), user_data.get('master_id'))
+        slots = await api_client.get_available_slots(
+            service_id=user_data['service_id'],
+            selected_date=selected_date.isoformat(),
+            telegram_user_id=callback.from_user.id,
+            master_id=user_data.get('master_id')
+        )
         if not slots:
             await callback.answer("На эту дату, к сожалению, уже всё расписано. Посмотрите, пожалуйста, другой денёк. 😔", show_alert=True)
             return
@@ -148,7 +161,13 @@ async def process_calendar_nav(callback: types.CallbackQuery, state: FSMContext)
     year, month = int(year_str), int(month_str)
     user_data = await state.get_data()
     try:
-        active_days = await api_client.get_active_days(user_data['service_id'], year, month, user_data.get('master_id'))
+        active_days = await api_client.get_active_days(
+            service_id=user_data['service_id'],
+            year=year,
+            month=month,
+            telegram_user_id=callback.from_user.id,
+            master_id=user_data.get('master_id')
+        )
         calendar_kb = create_calendar_keyboard(year, month, set(active_days))
         back_button = types.InlineKeyboardButton(text="◀️ Назад к мастерам", callback_data="back_to_master")
         calendar_kb.inline_keyboard.append([back_button])
@@ -199,7 +218,13 @@ async def back_to_date_handler(callback: types.CallbackQuery, state: FSMContext)
     user_data = await state.get_data()
     selected_date_obj = date.fromisoformat(user_data['selected_date'])
     try:
-        active_days = await api_client.get_active_days(user_data['service_id'], selected_date_obj.year, selected_date_obj.month, user_data.get('master_id'))
+        active_days = await api_client.get_active_days(
+            service_id=user_data['service_id'],
+            year=selected_date_obj.year,
+            month=selected_date_obj.month,
+            telegram_user_id=callback.from_user.id,
+            master_id=user_data.get('master_id')
+        )
         calendar_kb = create_calendar_keyboard(selected_date_obj.year, selected_date_obj.month, set(active_days))
         back_button = types.InlineKeyboardButton(text="◀️ Назад к мастерам", callback_data="back_to_master")
         calendar_kb.inline_keyboard.append([back_button])
@@ -213,7 +238,12 @@ async def back_to_time_handler(callback: types.CallbackQuery, state: FSMContext)
     await state.set_state(AppointmentStates.choosing_time)
     user_data = await state.get_data()
     try:
-        slots = await api_client.get_available_slots(user_data['service_id'], user_data['selected_date'], user_data.get('master_id'))
+        slots = await api_client.get_available_slots(
+            service_id=user_data['service_id'],
+            selected_date=user_data['selected_date'],
+            telegram_user_id=callback.from_user.id,
+            master_id=user_data.get('master_id')
+        )
         builder = InlineKeyboardBuilder()
         time_buttons = [types.InlineKeyboardButton(text=slot['time'], callback_data=f"time_select:{slot['time']}:{slot['master_id']}") for slot in slots]
         builder.add(*time_buttons)
@@ -230,50 +260,53 @@ async def back_to_time_handler(callback: types.CallbackQuery, state: FSMContext)
 @router.callback_query(AppointmentStates.confirmation, F.data == "confirm_booking")
 async def confirm_booking_handler(callback: types.CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
+    
+    naive_dt = datetime.fromisoformat(f"{user_data['selected_date']}T{user_data['selected_time']}:00")
+    utc_dt = naive_dt.astimezone(timezone.utc)
+    start_time_str = utc_dt.isoformat()
+
     payload = {
         "telegram_user_id": callback.from_user.id,
         "user_name": callback.from_user.full_name,
         "service_id": user_data['service_id'],
         "master_id": user_data['final_master_id'],
-        "start_time": f"{user_data['selected_date']}T{user_data['selected_time']}:00"
+        "start_time": start_time_str
     }
     try:
         api_response = await api_client.create_appointment(payload)
-        selected_date_obj = date.fromisoformat(user_data['selected_date'])
-        formatted_date = selected_date_obj.strftime("%d %B %Y")
+        
+        response_dt_naive = datetime.fromisoformat(api_response['start_time'])
+        formatted_date = response_dt_naive.strftime("%d %B %Y")
+        formatted_time = response_dt_naive.strftime("%H:%M")
+
         await callback.message.edit_text(
             f"🎉 Ура! Я вас записала! \n\n"
-            f"Будем с нетерпением ждать вас в салоне «Элеганс» {formatted_date} в {user_data['selected_time']} "
+            f"Будем с нетерпением ждать вас в салоне «Элеганс» {formatted_date} в {formatted_time} "
             f"на процедуру «{api_response['service_name']}» к мастеру {api_response['master_name']}. 💖"
         )
+        
         keyboard = types.ReplyKeyboardMarkup(
             keyboard=[[types.KeyboardButton(text="📱 Поделиться контактом", request_contact=True)]],
-            resize_keyboard=True, one_time_keyboard=True
+            resize_keyboard=True,
+            one_time_keyboard=True
         )
+        
         await callback.message.answer(
             "Чтобы мы могли оперативно с вами связаться в случае изменений, поделитесь, пожалуйста, вашим контактным номером телефона. Это очень удобно! 😊",
             reply_markup=keyboard
         )
-
-# --- ИЗМЕНЕНИЕ 1: Устанавливаем новое состояние вместо очистки ---
         await state.set_state(AppointmentStates.awaiting_contact)
 
     except httpx.HTTPStatusError as e:
-        if e.response.status_code == 409:
-            await callback.message.edit_text("😔 Ой, простите, кто-то оказался чуточку быстрее и только что занял это время! Давайте попробуем подобрать другое. Начните, пожалуйста, заново с выбора услуги /book.")
-        else:
-            await callback.message.edit_text("😔 Простите, произошла какая-то ошибка и запись не была создана. Давайте попробуем еще раз! /book")
-            logging.error(f"API Error: {e.response.text}")
-
-# --- ИЗМЕНЕНИЕ 2: Очищаем состояние в случае ошибки ---
-        await state.clear() 
-
+        error_detail = e.response.json().get("detail", "Неизвестная ошибка API.")
+        await callback.message.edit_text(f"😔 {error_detail}\n\nДавайте попробуем подобрать другое. Начните, пожалуйста, заново с выбора услуги /book.")
+        logging.error(f"API Error: {e.response.text}")
+        await state.clear()
     except httpx.RequestError:
         await callback.message.edit_text("😔 Наш сервис записи временно прилег отдохнуть. Попробуйте, пожалуйста, через несколько минут!")
-# Убираем finally, так как очистка состояния теперь зависит от результата
-#    finally:
-#        await state.clear()
-        await callback.answer()
+        await state.clear()
+    
+    await callback.answer()
 
 @router.callback_query(StateFilter(AppointmentStates.confirmation), F.data == "cancel_booking")
 async def cancel_booking_handler(callback: types.CallbackQuery, state: FSMContext):

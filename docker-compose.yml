@@ -16,10 +16,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-    networks: # <--- ДОБАВЛЕНО
+    networks:
       - salon_network
 
-  # --- ДОБАВЛЕН СЕРВИС REDIS ---
   redis:
     image: redis:7-alpine
     container_name: salon_redis
@@ -40,12 +39,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    env_file:
-      - .env
     environment:
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - RUNNING_IN_DOCKER=1
     restart: unless-stopped
-    networks: # <--- ДОБАВЛЕНО
+    networks:
       - salon_network
 
   bot:
@@ -54,21 +56,23 @@ services:
     command: python3 bot.py
     volumes:
       - .:/app
-    # --- ИЗМЕНЕН БЛОК ЗАВИСИМОСТЕЙ ---
     depends_on:
       - api
       - redis
-    env_file:
-      - .env
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - API_URL=http://api:8000
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     restart: unless-stopped
-    networks: # <--- ДОБАВЛЕНО
+    networks:
       - salon_network
 
 volumes:
   postgres_data:
-  redis_data: # <--- ДОБАВЛЕНО
+  redis_data:
 
-# --- ДОБАВЛЕНА ОБЩАЯ СЕТЬ ДЛЯ ВСЕХ СЕРВИСОВ ---
 networks:
   salon_network:
     driver: bridge

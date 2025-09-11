@@ -11,10 +11,13 @@ from services.api_client import api_client
 
 GEMINI_TIMEOUT = 20.0
 
-get_salon_info_func = FunctionDeclaration(name="get_salon_info", description="Получает актуальный список всех услуг, цен, мастеров и их специализаций.", parameters={"type": "OBJECT", "properties": {}})
-check_availability_func = FunctionDeclaration(name="check_availability", description="Проверяет свободные слоты для конкретной услуги на конкретную дату.", parameters={"type": "OBJECT", "properties": {"service_name": {"type": "STRING", "description": "Точное название услуги, например 'Женская стрижка'."},"appointment_date": {"type": "STRING", "description": f"Дата для проверки в формате YYYY-MM-DD. Сегодня: {date.today().isoformat()}."}}, "required": ["service_name", "appointment_date"]})
-create_appointment_func = FunctionDeclaration(name="create_appointment", description="Финальное действие. Создает запись в календаре.", parameters={"type": "OBJECT", "properties": {"service_name": {"type": "STRING", "description": "Название услуги."},"appointment_date": {"type": "STRING", "description": "Дата записи в формате YYYY-MM-DD."},"appointment_time": {"type": "STRING", "description": "Время записи в формате HH:MM."},"master_name": {"type": "STRING", "description": "Имя мастера, если оно известно."}}, "required": ["service_name", "appointment_date", "appointment_time"]})
-agent_tools = Tool(function_declarations=[get_salon_info_func, check_availability_func, create_appointment_func])
+cancel_appointment_func = FunctionDeclaration(name="cancel_appointment", description="Отменяет существующую запись клиента по её уникальному ID.", parameters={"type": "OBJECT", "properties": {"appointment_id": {"type": "INTEGER"}}, "required": ["appointment_id"]})
+get_my_appointments_func = FunctionDeclaration(name="get_my_appointments", description="Получает список всех предстоящих записей клиента с их ID.", parameters={"type": "OBJECT", "properties": {}})
+get_salon_info_func = FunctionDeclaration(name="get_salon_info", description="Получает актуальный список всех услуг, цен и мастеров.", parameters={"type": "OBJECT", "properties": {}})
+check_availability_func = FunctionDeclaration(name="check_availability", description="Проверяет свободные слоты для услуги на дату.", parameters={"type": "OBJECT", "properties": {"service_name": {"type": "STRING"}, "appointment_date": {"type": "STRING"}}, "required": ["service_name", "appointment_date"]})
+create_appointment_func = FunctionDeclaration(name="create_appointment", description="Финальное действие. Создает запись в календаре.", parameters={"type": "OBJECT", "properties": {"service_name": {"type": "STRING"}, "appointment_date": {"type": "STRING"}, "appointment_time": {"type": "STRING"}, "master_name": {"type": "STRING"}}, "required": ["service_name", "appointment_date", "appointment_time"]})
+
+agent_tools = Tool(function_declarations=[cancel_appointment_func, get_my_appointments_func, get_salon_info_func, check_availability_func, create_appointment_func])
 
 class GeminiClient:
     def __init__(self, api_key: str):
@@ -23,43 +26,68 @@ class GeminiClient:
         else:
             try:
                 genai.configure(api_key=api_key)
-                system_instruction = ("Ты — 'Элеганс-Агент', умный ИИ-администратор. Твоя задача — помочь клиенту записаться, используя инструменты. " "Твой рабочий процесс: 1. Если нужно, используй `get_salon_info`, чтобы узнать об услугах. " "2. Когда клиент выберет услугу и дату, ОБЯЗАТЕЛЬНО используй `check_availability`, чтобы найти свободные слоты. " "3. Предложи найденные слоты клиенту. " "4. Когда клиент выберет конкретное время, используй `create_appointment` для записи. " "Не придумывай информацию, всегда получай ее через инструменты.")
-                self.model = genai.GenerativeModel('gemini-1.5-flash-latest', tools=[agent_tools], system_instruction=system_instruction, generation_config=GenerationConfig(temperature=0.1))
-                logging.info("AI-Агент Gemini успешно инициализирован.")
+                system_instruction = (
+                    "Ты — 'Элеганс-Агент', ИИ-администратор. Твоя задача — помогать клиенту, ИСКЛЮЧИТЕЛЬНО используя инструменты. "
+                    "ТЫ НЕ ДОЛЖЕН ГЕНЕРИРОВАТЬ ТЕКСТОВЫЙ ОТВЕТ, ЕСЛИ МОЖЕШЬ ВЫЗВАТЬ ИНСТРУМЕНТ. "
+                    "ПРАВИЛА ОТМЕНЫ ЗАПИСИ: "
+                    "1. Получи запрос от клиента (например, 'отмени запись 26 сентября'). "
+                    "2. ОБЯЗАТЕЛЬНО вызови `get_my_appointments`, чтобы получить ПОЛНЫЙ список записей клиента с их ID. "
+                    "3. Проанализируй список. Если на указанную дату найдена ТОЛЬКО ОДНА запись, СРАЗУ ЖЕ вызови `cancel_appointment` с ее ID. НЕ СПРАШИВАЙ ПОДТВЕРЖДЕНИЯ. "
+                    "4. Если на указанную дату найдено НЕСКОЛЬКО записей, задай клиенту УТОЧНЯЮЩИЙ вопрос, перечислив эти записи, и спроси, какую именно отменить. "
+                    "5. Получив ответ, СРАЗУ ЖЕ вызови `cancel_appointment` для каждого соответствующего ID. НЕ ГОВОРИ 'Хорошо, отменяю', А СРАЗУ ВЫЗЫВАЙ ИНСТРУМЕНТ. "
+                    "НИКОГДА не спрашивай у клиента ID или номер записи. Ты должен сам находить его."
+                )
+                self.model = genai.GenerativeModel('gemini-1.5-flash-latest', tools=[agent_tools], system_instruction=system_instruction, generation_config=GenerationConfig(temperature=0.0))
+                logging.info("AI-Агент Gemini с железной логикой отмены успешно инициализирован.")
             except Exception as e:
                 logging.error(f"Не удалось инициализировать Gemini: {e}"); self.model = None
 
-    async def handle_natural_language(self, state: FSMContext, user_message: str, user_name: str) -> dict:
+    async def handle_natural_language(self, state: FSMContext, user_message: str, user_name: str, telegram_user_id: int) -> dict:
         if not self.model: return {"type": "error", "content": "Сервис AI временно недоступен."}
         data = await state.get_data(); history_raw = data.get("chat_history", [])
         if not history_raw: history_raw.append({'role': 'user', 'parts': [{'text': f"(Системная заметка: имя клиента - {user_name})"}]})
         chat_session = self.model.start_chat(history=history_raw)
         try:
-            for _ in range(5):
-                response_task = chat_session.send_message_async(user_message if _ == 0 else "")
-                response = await asyncio.wait_for(response_task, timeout=GEMINI_TIMEOUT)
-                response_part = response.parts[0]
-                if response_part.function_call:
-                    tool_call = response_part.function_call; tool_name = tool_call.name; tool_args = {key: value for key, value in tool_call.args.items()}
+            response = await asyncio.wait_for(chat_session.send_message_async(user_message), timeout=GEMINI_TIMEOUT)
+            while response.parts[0].function_call:
+                tool_calls = [part.function_call for part in response.parts if part.function_call]
+                if not tool_calls: break
+                tool_responses = []
+                is_final_action = False
+                for tool_call in tool_calls:
+                    tool_name = tool_call.name
+                    tool_args = {key: value for key, value in tool_call.args.items()}
                     logging.info(f"Агент хочет использовать инструмент: {tool_name} с аргументами: {tool_args}")
+                    if tool_name in ["create_appointment", "cancel_appointment"]:
+                        is_final_action = True
+                        tool_responses.append({"type": "tool_call", "name": tool_name, "args": tool_args})
+                        continue
                     tool_response_content = ""
-                    if tool_name == "get_salon_info":
+                    if tool_name == "get_my_appointments":
+                        api_result = await api_client.get_client_appointments(telegram_user_id)
+                        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Ключ теперь строка ---
+                        cancellation_cache = {str(item['id']): item for item in api_result}
+                        await state.update_data(cancellation_cache=cancellation_cache)
+                        if not api_result: tool_response_content = "У клиента нет предстоящих записей."
+                        else: tool_response_content = f"Вот список записей клиента: {json.dumps(api_result, ensure_ascii=False, default=str)}"
+                    elif tool_name == "get_salon_info":
                         api_result = await api_client.get_salon_info(); tool_response_content = json.dumps(api_result, ensure_ascii=False)
                     elif tool_name == "check_availability":
-                        api_result = await api_client.check_availability(**tool_args)
-                        if not api_result: tool_response_content = "На эту дату свободных слотов нет. Предложи клиенту выбрать другую дату."
+                        api_result = await api_client.check_availability(**tool_args, telegram_user_id=telegram_user_id)
+                        if not api_result: tool_response_content = "На эту дату свободных слотов нет."
                         else: tool_response_content = f"Вот список свободных слотов: {json.dumps(api_result, ensure_ascii=False)}"
-                    elif tool_name == "create_appointment":
-                        await state.update_data(chat_history=[]); return {"type": "tool_call", "name": tool_name, "args": tool_args}
-                    tool_response_part = {"function_response": {"name": tool_name, "response": {"content": tool_response_content}}}
-                    response = await chat_session.send_message_async(tool_response_part)
-                else:
-                    updated_history = [{'role': c.role, 'parts': [{'text': p.text} for p in c.parts]} for c in chat_session.history if c.role != 'user' or "(Системная заметка:" not in c.parts[0].text]
-                    await state.update_data(chat_history=updated_history); return {"type": "text", "content": response_part.text}
-            return {"type": "error", "content": "Ассистент зашел в тупик. Пожалуйста, попробуйте сформулировать запрос проще или воспользуйтесь /book."}
+                    tool_responses.append({"function_response": {"name": tool_name, "response": {"content": tool_response_content}}})
+                if is_final_action:
+                    await state.update_data(chat_history=[])
+                    return {"type": "multi_tool_call", "calls": [r for r in tool_responses if r['type'] == 'tool_call']}
+                response = await asyncio.wait_for(chat_session.send_message_async(tool_responses), timeout=GEMINI_TIMEOUT)
+            final_text = response.parts[0].text
+            updated_history = [{'role': c.role, 'parts': [{'text': p.text} for p in c.parts]} for c in chat_session.history if c.role != 'user' or "(Системная заметка:" not in c.parts[0].text]
+            await state.update_data(chat_history=updated_history)
+            return {"type": "text", "content": final_text}
         except (asyncio.TimeoutError, Exception) as e:
             logging.error(f"Ошибка при работе с Gemini: {e}")
-            if "quota" in str(e).lower(): return {"type": "error", "content": "😔 К сожалению, дневной лимит запросов к AI исчерпан. Пожалуйста, воспользуйтесь стандартной записью /book или попробуйте завтра."}
-            return {"type": "error", "content": "😔 Простите, произошла внутренняя ошибка ассистента. Пожалуйста, воспользуйтесь стандартной записью: /book"}
+            if "quota" in str(e).lower(): return {"type": "error", "content": "😔 К сожалению, дневной лимит запросов к AI исчерпан."}
+            return {"type": "error", "content": "😔 Простите, произошла внутренняя ошибка ассистента."}
 
 gemini_client = GeminiClient(GEMINI_API_KEY)

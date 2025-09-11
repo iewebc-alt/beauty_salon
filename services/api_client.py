@@ -59,13 +59,14 @@ class ApiClient:
         payload = {"phone_number": phone_number}
         response = await self.client.patch(f"/api/v1/clients/{telegram_user_id}", json=payload)
         response.raise_for_status()
-
+        
     async def get_salon_info(self) -> Dict[str, Any]:
         response = await self.client.get("/api/v1/salon-info")
         response.raise_for_status()
         return response.json()
 
-    async def check_availability(self, service_name: str, appointment_date: str) -> List[Dict[str, Any]]:
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+    async def check_availability(self, service_name: str, appointment_date: str, telegram_user_id: int) -> List[Dict[str, Any]]:
         all_services_resp = await self.get_services()
         service_id = None
         for service in all_services_resp:
@@ -74,7 +75,8 @@ class ApiClient:
                 break
         if not service_id:
             return []
-        params = {"service_id": service_id, "selected_date": appointment_date, "telegram_user_id": 0}
+        # Используем реальный ID пользователя
+        params = {"service_id": service_id, "selected_date": appointment_date, "telegram_user_id": telegram_user_id}
         response = await self.client.get("/api/v1/available-slots", params=params)
         response.raise_for_status()
         return response.json()

@@ -1,5 +1,12 @@
-.
-├── api.py
+/var/www/beauty_salon/
+├── api/                 #<-- НОВАЯ ПАПКА
+│   ├── __init__.py      #(может быть пустым)
+│   ├── main.py          #(новый главный файл API)
+│   ├── dependencies.py
+│   ├── schemas.py
+│   └── routers/
+│       ├── __init__.py  #(может быть пустым)
+│       └── bot.py
 ├── bot.py                 # <--- Главный запускаемый файл
 ├── config.py
 ├── database.py
@@ -17,3 +24,4 @@
     ├── __init__.py
     ├── api_client.py      # <--- Модуль для взаимодействия с вашим API
     └── gemini.py          # <--- Модуль для работы с Gemini AI
+

@@ -133,7 +133,7 @@ def get_salon_information(db: Session = Depends(get_db)):
     
     return {"services": services, "masters": masters_processed}
 
-@router.post("/appointments/natural", response_model=schemas.AppointmentInfoSchema)
+@router.post("/appointments/natural")
 def create_appointment_from_natural_language(request: schemas.AppointmentNaturalLanguageSchema, db: Session = Depends(get_db)):
     logging.info(f"Received natural language appointment request: {request.dict()}")
     client = db.query(models.Client).filter(models.Client.telegram_user_id == request.telegram_user_id).first()
@@ -160,7 +160,6 @@ def create_appointment_from_natural_language(request: schemas.AppointmentNatural
     if client_conflicting > 0: raise HTTPException(status_code=409, detail="У Вас уже есть другая запись на это время.")
     new_appointment = models.Appointment(client_id=client.id, master_id=master.id, service_id=service.id, start_time=start_time, end_time=end_time)
     db.add(new_appointment); db.commit(); db.refresh(new_appointment)
-# --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
     return {
         "id": new_appointment.id,
         "start_time": new_appointment.start_time,
@@ -168,7 +167,7 @@ def create_appointment_from_natural_language(request: schemas.AppointmentNatural
         "master_name": master.name
     }
 
-@router.post("/appointments", response_model=schemas.AppointmentInfoSchema)
+@router.post("/appointments")
 def create_appointment(appointment: schemas.AppointmentCreateSchema, db: Session = Depends(get_db)):
     logging.info(f"Received appointment request: {appointment.dict()}")
     client = db.query(models.Client).filter(models.Client.telegram_user_id == appointment.telegram_user_id).first()
@@ -186,7 +185,6 @@ def create_appointment(appointment: schemas.AppointmentCreateSchema, db: Session
     if client_conflicting > 0: raise HTTPException(status_code=409, detail="У Вас уже есть другая запись на это время.")
     new_appointment = models.Appointment(client_id=client.id, master_id=appointment.master_id, service_id=appointment.service_id, start_time=start_time_naive, end_time=end_time_naive)
     db.add(new_appointment); db.commit(); db.refresh(new_appointment)
-# --- И ИСПРАВЛЕНИЕ ЗДЕСЬ ---
     return {
         "id": new_appointment.id,
         "start_time": new_appointment.start_time,
@@ -199,7 +197,6 @@ def get_client_appointments(telegram_user_id: int, db: Session = Depends(get_db)
     client = db.query(models.Client).filter(models.Client.telegram_user_id == telegram_user_id).first()
     if not client: return []
     now_naive = datetime.utcnow()
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Используем joinedload для подгрузки связанных данных ---
     appointments = db.query(models.Appointment).options(
         joinedload(models.Appointment.service),
         joinedload(models.Appointment.master)
@@ -208,7 +205,6 @@ def get_client_appointments(telegram_user_id: int, db: Session = Depends(get_db)
         models.Appointment.start_time >= now_naive
     ).order_by(models.Appointment.start_time).all()
     
-    # Формируем ответ вручную, чтобы он точно соответствовал схеме
     result = []
     for appt in appointments:
         result.append({

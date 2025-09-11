@@ -4,6 +4,7 @@ from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 import httpx
 import logging
+import json
 from datetime import datetime
 
 from fsm import AppointmentStates
@@ -29,7 +30,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
         reply_markup=types.ReplyKeyboardRemove()
     )
 
-# --- НАЧАЛО ИЗМЕНЕНИЙ ---
 @router.message(Command("cancel"))
 async def cancel_handler(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
@@ -38,22 +38,18 @@ async def cancel_handler(message: types.Message, state: FSMContext):
         await message.answer("Сейчас нет активного процесса, который можно было бы отменить. 😊")
         return
 
-    # Проверяем, в каком именно состоянии мы находимся
     if current_state == AppointmentStates.awaiting_contact:
-        # Если мы просто ждем контакт, запись уже создана. Отменять нечего.
         await state.clear()
         await message.answer(
             "Хорошо, понял(а) Вас. Ваша запись уже подтверждена. Если захотите ее отменить, воспользуйтесь командой /my_appointments. ✨",
             reply_markup=types.ReplyKeyboardRemove()
         )
     else:
-        # Если мы в процессе записи, то отменяем его
         await state.clear()
         await message.answer(
             "Хорошо, я всё отменила. Давайте начнем заново, если хотите! /book",
             reply_markup=types.ReplyKeyboardRemove()
         )
-# --- КОНЕЦ ИЗМЕНЕНИЙ ---
 
 @router.message(F.contact, StateFilter(AppointmentStates.awaiting_contact, None))
 async def handle_contact(message: types.Message, state: FSMContext):
@@ -105,6 +101,7 @@ async def handle_unhandled_content(message: types.Message, state: FSMContext, bo
     msg = None
     try:
         msg = await message.answer("Думаю...")
+
         gemini_response = await gemini_client.handle_natural_language(
             state=state,
             user_message=message.text,
@@ -117,22 +114,32 @@ async def handle_unhandled_content(message: types.Message, state: FSMContext, bo
                 chat_id=message.chat.id,
                 message_id=msg.message_id
             )
+
         elif gemini_response['type'] == 'error':
             await bot.edit_message_text(
                 text=gemini_response['content'],
                 chat_id=message.chat.id,
                 message_id=msg.message_id
             )
+
         elif gemini_response['type'] == 'tool_call':
             await bot.delete_message(chat_id=message.chat.id, message_id=msg.message_id)
+            
             tool_name = gemini_response['name']
             tool_args = gemini_response['args']
+
             if tool_name == 'create_appointment':
-                payload = {"telegram_user_id": message.from_user.id, "user_name": message.from_user.full_name, **tool_args}
+                payload = {
+                    "telegram_user_id": message.from_user.id,
+                    "user_name": message.from_user.full_name,
+                    **tool_args
+                }
+                
                 try:
                     api_response = await api_client.create_natural_appointment(payload)
                     dt_object = datetime.fromisoformat(api_response['start_time'])
                     formatted_datetime = dt_object.strftime('%d %B в %H:%M')
+                    
                     await message.answer(
                         f"🎉 Отлично! Я успешно записал(а) Вас.\n\n"
                         f"**Услуга:** {api_response['service_name']}\n"
@@ -142,11 +149,16 @@ async def handle_unhandled_content(message: types.Message, state: FSMContext, bo
                         parse_mode="Markdown"
                     )
                 except httpx.HTTPStatusError as e:
-                    error_detail = e.response.json().get("detail", "Неизвестная ошибка API.")
+                    error_detail = "Неизвестная ошибка API."
+                    try:
+                        error_detail = e.response.json().get("detail", error_detail)
+                    except json.JSONDecodeError:
+                        error_detail = e.response.text
                     await message.answer(f"😔 Не удалось создать запись. Причина: {error_detail}\n\nПожалуйста, попробуйте еще раз или воспользуйтесь стандартной записью: /book")
                 except Exception as e:
                     logging.error(f"Непредвиденная ошибка при вызове API: {e}")
                     await message.answer("😔 Простите, произошла непредвиденная ошибка. Пожалуйста, воспользуйтесь стандартной записью: /book")
+
     except Exception as e:
         logging.error(f"Критическая ошибка в хендлере: {e}")
         if msg:

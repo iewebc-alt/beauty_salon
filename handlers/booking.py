@@ -6,6 +6,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from datetime import date, datetime, timezone
 import httpx
 import logging
+import json
 
 from fsm import AppointmentStates
 from keyboards import create_calendar_keyboard
@@ -298,7 +299,12 @@ async def confirm_booking_handler(callback: types.CallbackQuery, state: FSMConte
         await state.set_state(AppointmentStates.awaiting_contact)
 
     except httpx.HTTPStatusError as e:
-        error_detail = e.response.json().get("detail", "Неизвестная ошибка API.")
+        error_detail = "Неизвестная ошибка API."
+        try:
+            error_detail = e.response.json().get("detail", error_detail)
+        except json.JSONDecodeError:
+            error_detail = e.response.text
+        
         await callback.message.edit_text(f"😔 {error_detail}\n\nДавайте попробуем подобрать другое. Начните, пожалуйста, заново с выбора услуги /book.")
         logging.error(f"API Error: {e.response.text}")
         await state.clear()

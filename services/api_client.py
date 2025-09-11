@@ -2,6 +2,7 @@
 import httpx
 from typing import List, Optional, Dict, Any
 from datetime import date
+import json
 from config import API_URL
 
 class ApiClient:
@@ -25,12 +26,7 @@ class ApiClient:
         return response.json()
 
     async def get_active_days(self, service_id: int, year: int, month: int, telegram_user_id: int, master_id: Optional[int] = None) -> List[int]:
-        params = {
-            "service_id": service_id,
-            "year": year,
-            "month": month,
-            "telegram_user_id": telegram_user_id
-        }
+        params = {"service_id": service_id, "year": year, "month": month, "telegram_user_id": telegram_user_id}
         if master_id:
             params["master_id"] = master_id
         response = await self.client.get("/api/v1/active-days-in-month", params=params)
@@ -38,11 +34,7 @@ class ApiClient:
         return response.json()
 
     async def get_available_slots(self, service_id: int, selected_date: str, telegram_user_id: int, master_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        params = {
-            "service_id": service_id,
-            "selected_date": selected_date,
-            "telegram_user_id": telegram_user_id
-        }
+        params = {"service_id": service_id, "selected_date": selected_date, "telegram_user_id": telegram_user_id}
         if master_id:
             params["master_id"] = master_id
         response = await self.client.get("/api/v1/available-slots", params=params)
@@ -82,10 +74,6 @@ class ApiClient:
                 break
         if not service_id:
             return []
-
-        # Примечание: check_availability используется AI, у которого нет telegram_user_id.
-        # Для этой функции мы можем использовать "заглушку", например 0,
-        # так как AI просто проверяет общую доступность, а не для конкретного клиента.
         params = {"service_id": service_id, "selected_date": appointment_date, "telegram_user_id": 0}
         response = await self.client.get("/api/v1/available-slots", params=params)
         response.raise_for_status()

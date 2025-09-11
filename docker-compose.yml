@@ -31,7 +31,7 @@ services:
   api:
     build: .
     container_name: salon_api_service
-    command: uvicorn api:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app
     ports:

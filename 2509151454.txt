@@ -1,0 +1,1594 @@
+==================================================
+           DUMPING PROJECT FILE CONTENTS
+==================================================
+
+
+--- START OF FILE docker-compose.yml ---
+services:
+  db:
+    image: postgres:14-alpine
+    container_name: salon_postgres_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+#    healthcheck:
+#      test: ["CMD-SHELL", "pg_isready -U $$  {POSTGRES_USER} -d   $${POSTGRES_DB}"]
+#      interval: 5s
+#      timeout: 5s
+#      retries: 5
+    networks:
+      - salon_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: salon_redis
+    volumes:
+      - redis_data:/data
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    restart: unless-stopped
+    networks:
+      - salon_network
+
+  api:
+    build: .
+    container_name: salon_api_service
+    command: >
+      sh -c "if [ \"$ENVIRONMENT\" = \"prod\" ]; then
+               uvicorn api.main:app --host 0.0.0.0 --port 8000;
+             else
+               uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload;
+             fi"
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - RUNNING_IN_DOCKER=1
+      - ENVIRONMENT=${ENVIRONMENT}
+      - DEBUG=${DEBUG}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - salon_network
+
+  bot:
+    build: .
+    container_name: salon_telegram_bot
+    command: python3 bot.py
+    volumes:
+      - .:/app
+    depends_on:
+      - api
+      - redis
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - API_URL=http://api:8000
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - ENVIRONMENT=${ENVIRONMENT}
+      - DEBUG=${DEBUG}
+    restart: unless-stopped
+    networks:
+      - salon_network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  salon_network:
+    driver: bridge
+
+
+--- START OF FILE requirements.txt ---
+aiofiles==24.1.0
+aiogram==3.22.0
+google-generativeai==0.5.2
+aiohappyeyeballs==2.6.1
+aiohttp==3.12.15
+aiosignal==1.4.0
+annotated-types==0.7.0
+anyio==4.10.0
+attrs==25.3.0
+bcrypt==4.3.0
+certifi==2025.8.3
+click==8.2.1
+fastapi==0.116.1
+frozenlist==1.7.0
+greenlet==3.2.4
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.10
+Jinja2==3.1.6
+magic-filter==1.0.12
+MarkupSafe==3.0.2
+multidict==6.6.4
+passlib==1.7.4
+propcache==0.3.2
+psycopg2-binary==2.9.10
+pydantic==2.8.2
+pydantic_core==2.20.1
+python-dotenv==1.1.1
+python-multipart==0.0.20
+sniffio==1.3.1
+SQLAlchemy==2.0.43
+starlette==0.47.3
+typing-inspection==0.4.1
+typing_extensions==4.15.0
+uvicorn==0.35.0
+yarl==1.20.1
+redis==5.0.1
+pytest==8.3.3
+pytest-asyncio==0.24.0
+babel==2.15.0
+
+
+--- START OF FILE config.py ---
+import os
+from datetime import timezone
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# --- UTC ---
+UTC = timezone.utc
+
+# --- База Данных ---
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_NAME = os.getenv("DB_NAME")
+
+# Если переменная окружения RUNNING_IN_DOCKER установлена, используем 'db'.
+# Иначе (при ручном запуске) используем 'localhost'.
+if os.getenv("RUNNING_IN_DOCKER"):
+    DB_HOST = os.getenv("DB_HOST", "db")
+else:
+    DB_HOST = "localhost"
+
+DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}"
+
+# --- Telegram Бот ---
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+API_URL = os.getenv("API_URL
+
+
+--- START OF FILE database.py ---
+# database.py
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+from config import DATABASE_URL
+
+Base = declarative_base()  # Переместим определение Base сюда
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False)
+
+def get_engine():
+    return create_engine(DATABASE_URL)
+
+
+--- START OF FILE models.py ---
+# models.py
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Text,
+    ForeignKey,
+    Table,
+    BigInteger,
+    Time,
+    Date,
+    DateTime
+)
+from sqlalchemy.orm import relationship
+from database import Base
+
+# Ассоциация мастеров и услуг
+master_services = Table(
+    'master_services',
+    Base.metadata,
+    Column('master_id', Integer, ForeignKey('masters.id'), primary_key=True),
+    Column('service_id', Integer, ForeignKey('services.id'), primary_key=True)
+)
+
+class Client(Base):
+    __tablename__ = "clients"
+    id = Column(Integer, primary_key=True, index=True)
+    telegram_user_id = Column(BigInteger, unique=True, nullable=False)
+    name = Column(String(255))
+    phone_number = Column(String(20))
+    appointments = relationship("Appointment", back_populates="client")
+
+class Service(Base):
+    __tablename__ = "services"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), index=True)
+    price = Column(Integer)
+    duration_minutes = Column(Integer)
+    masters = relationship("Master", secondary=master_services, back_populates="services")
+    appointments = relationship("Appointment", back_populates="service")
+
+class Master(Base):
+    __tablename__ = "masters"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), index=True)
+    specialization = Column(String(255))
+    description = Column(Text, nullable=True)
+    services = relationship("Service", secondary=master_services, back_populates="masters")
+    schedules = relationship("Schedule", back_populates="master")
+    appointments = relationship("Appointment", back_populates="master")
+
+class Schedule(Base):
+    __tablename__ = "schedules"
+    id = Column(Integer, primary_key=True)
+    master_id = Column(Integer, ForeignKey('masters.id'))
+    day_of_week = Column(Integer, nullable=False)  # 1=Пн, 7=Вс
+    start_time = Column(Time, nullable=False)
+    end_time = Column(Time, nullable=False)
+    master = relationship("Master", back_populates="schedules")
+
+class Appointment(Base):
+    __tablename__ = "appointments"
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey('clients.id'))
+    master_id = Column(Integer, ForeignKey('masters.id'))
+    service_id = Column(Integer, ForeignKey('services.id'))
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=False)
+    client = relationship("Client", back_populates="appointments")
+    master = relationship("Master", back_populates="appointments")
+    service = relationship("Service", back_populates="appointments")
+
+
+--- START OF FILE fsm.py ---
+# fsm.py - Здесь мы определим состояния для машины состояний (FSM).
+from aiogram.fsm.state import State, StatesGroup
+
+class AppointmentStates(StatesGroup):
+    choosing_service = State()
+    choosing_master = State()
+    choosing_date = State()
+    choosing_time = State()
+    confirmation = State()
+    awaiting_contact = State() # <-- ДОБАВЬТЕ ЭТУ СТРОКУ
+
+
+--- START OF FILE keyboards.py ---
+# keyboards.py - Этот файл будет содержать функции для генерации клавиатур, в данном случае — календаря.
+import calendar
+from aiogram import types
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+def create_calendar_keyboard(year: int, month: int, active_days: set = None) -> types.InlineKeyboardMarkup:
+    if active_days is None:
+        active_days = set()
+    builder = InlineKeyboardBuilder()
+    month_names_ru = [
+        "", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+        "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"
+    ]
+    month_name = month_names_ru[month]
+    builder.row(types.InlineKeyboardButton(text=f"{month_name} {year}", callback_data="ignore"))
+    days_of_week = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    builder.row(*[types.InlineKeyboardButton(text=day, callback_data="ignore") for day in days_of_week])
+    month_calendar = calendar.monthcalendar(year, month)
+    for week in month_calendar:
+        row_buttons = []
+        for day in week:
+            if day == 0:
+                row_buttons.append(types.InlineKeyboardButton(text=" ", callback_data="ignore"))
+            elif day in active_days:
+                row_buttons.append(types.InlineKeyboardButton(text=f"✅{day}", callback_data=f"cal_day:{year}:{month}:{day}"))
+            else:
+                row_buttons.append(types.InlineKeyboardButton(text=str(day), callback_data="ignore_inactive_day"))
+        builder.row(*row_buttons)
+    prev_month, prev_year = (month - 1, year) if month > 1 else (12, year - 1)
+    next_month, next_year = (month + 1, year) if month < 12 else (1, year + 1)
+    builder.row(
+        types.InlineKeyboardButton(text="< Назад", callback_data=f"cal_nav:{prev_year}:{prev_month}"),
+        types.InlineKeyboardButton(text="Вперед >", callback_data=f"cal_nav:{next_year}:{next_month}")
+    )
+    return builder.as_markup()
+
+
+--- START OF FILE bot.py ---
+# bot.py
+import asyncio
+import logging
+import locale
+
+from aiogram import Bot, Dispatcher, types
+from aiogram.fsm.storage.redis import RedisStorage
+from redis.asyncio.client import Redis
+
+from config import BOT_TOKEN, REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, DEBUG
+from handlers import common, appointments, booking
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.DEBUG if DEBUG else logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+)
+
+async def main():
+    bot = Bot(token=BOT_TOKEN)
+    
+    # Настройка Redis Storage
+    redis_client = Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        password=REDIS_PASSWORD if REDIS_PASSWORD else None
+    )
+    storage = RedisStorage(redis=redis_client)
+    
+    dp = Dispatcher(storage=storage)
+
+    dp.include_router(booking.router)
+    dp.include_router(appointments.router)
+    dp.include_router(common.router)
+
+    await bot.set_my_commands([
+        types.BotCommand(command="start", description="Начало работы"),
+        types.BotCommand(command="book", description="Записаться на услугу"),
+        types.BotCommand(command="my_appointments", description="Мои записи"),
+        types.BotCommand(command="cancel", description="Отменить действие"),
+    ])
+
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    try:
+        locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')
+    except locale.Error:
+        logging.warning("Локаль ru_RU.UTF-8 не найдена, месяцы могут отображаться на английском.")
+    
+    asyncio.run(main())
+
+
+--- START OF FILE setup.py ---
+from setuptools import setup, find_packages
+
+setup(
+    name="beauty_salon_project",
+    version="0.1.0",
+    packages=find_packages(),
+)
+
+
+--- START OF FILE pytest.ini ---
+[pytest]
+pythonpath = .
+addopts = --import-mode=append
+
+#   **`[pytest]`**: Это заголовок секции для настроек `pytest`.
+#   **`pythonpath = .`**: Это и есть "магия". Эта строка говорит `pytest`: "Перед тем как запускать тесты, добавь в системный путь поиска модулей (`PYTHONPATH`) текущую директорию (`.`)".
+
+
+
+--- START OF FILE api/main.py ---
+# api/main.py
+import logging
+from fastapi import FastAPI, Request, Depends
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import Session, joinedload
+from typing import Optional
+from datetime import date, datetime, time, timedelta
+from contextlib import asynccontextmanager
+
+import models
+from database import SessionLocal, Base, get_engine
+from api.routers import bot
+from api.dependencies import authenticate_user, get_db
+from config import ADMIN_USERNAME, ADMIN_PASSWORD, ENVIRONMENT, DEBUG
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.DEBUG if DEBUG else logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logging.info("Application startup...")
+    engine = get_engine()
+    SessionLocal.configure(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    
+    with SessionLocal() as db:
+        create_initial_data(db)
+    yield
+    logging.info("Application shutdown...")
+
+app = FastAPI(title="Beauty Salon API", lifespan=lifespan)
+
+def create_initial_data(db: Session):
+    """Заполняет базу данных начальными данными, если она пуста."""
+    if db.query(models.Service).count() == 0:
+        logging.info("Creating initial services data...")
+        db.add_all([
+            models.Service(name="Маникюр с покрытием", price=2000, duration_minutes=90),
+            models.Service(name="Женская стрижка", price=2500, duration_minutes=60),
+            models.Service(name="Чистка лица", price=3500, duration_minutes=75),
+            models.Service(name="Наращивание ресниц", price=3000, duration_minutes=120),
+            models.Service(name="Оформление бровей", price=1500, duration_minutes=45),
+            models.Service(name="Депиляция", price=3000, duration_minutes=60)
+        ])
+        db.commit()
+    
+    if db.query(models.Master).count() == 0:
+        logging.info("Creating initial masters data...")
+        s_manicure=db.query(models.Service).filter_by(name="Маникюр с покрытием").one()
+        s_haircut=db.query(models.Service).filter_by(name="Женская стрижка").one()
+        s_facial=db.query(models.Service).filter_by(name="Чистка лица").one()
+        s_eyelash=db.query(models.Service).filter_by(name="Наращивание ресниц").one()
+        s_eyebrow=db.query(models.Service).filter_by(name="Оформление бровей").one()
+        s_depilation=db.query(models.Service).filter_by(name="Депиляция").one()
+
+        m1=models.Master(name="Анна Смирнова", specialization="Мастер маникюра", description="Опыт 5 лет.")
+        m2=models.Master(name="Елена Волкова", specialization="Парикмахер-стилист", description="Сложные окрашивания.")
+        m3=models.Master(name="Ольга Морозова", specialization="Косметолог-эстетист", description="Медицинское образование.")
+        m4=models.Master(name="Ирина Павлова", specialization="Лешмейкер и бровист", description="Чемпионка конкурсов.")
+        
+        db.add_all([m1, m2, m3, m4]); db.commit()
+        
+        m1.services.extend([s_manicure, s_eyebrow])
+        m2.services.append(s_haircut)
+        m3.services.extend([s_facial, s_depilation, s_eyebrow])
+        m4.services.extend([s_eyelash, s_eyebrow])
+        db.commit()
+        
+        schedules = [
+            models.Schedule(master_id=m1.id,day_of_week=d,start_time=time(10,0),end_time=time(19,0)) for d in [1,3,5]
+        ]
+        schedules.extend([
+            models.Schedule(master_id=m2.id,day_of_week=d,start_time=time(9,0),end_time=time(18,0)) for d in [2,4,6]
+        ])
+        schedules.extend([
+            models.Schedule(master_id=m3.id,day_of_week=d,start_time=time(10,0),end_time=time(20,0)) for d in [3,5]
+        ])
+        schedules.extend([
+            models.Schedule(master_id=m4.id,day_of_week=d,start_time=time(11,0),end_time=time(20,0)) for d in [1,3,5,7]
+        ])
+        
+        db.add_all(schedules); db.commit()
+        logging.info("Initial data created for testing.")
+
+app.include_router(bot.router)
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
+
+@app.get("/")
+def read_root():
+    return {"message": "Beauty Salon API is running"}
+
+@app.get("/admin/schedule", include_in_schema=False)
+def admin_schedule_page(
+    request: Request, 
+    selected_date_str: Optional[str] = None, 
+    db: Session = Depends(get_db), 
+    username: str = Depends(authenticate_user)
+):
+    try:
+        selected_date = datetime.strptime(selected_date_str, "%Y-%m-%d").date() if selected_date_str else date.today()
+    except ValueError:
+        selected_date = date.today()
+    
+    prev_date = selected_date - timedelta(days=1)
+    next_date = selected_date + timedelta(days=1)
+    
+    masters = db.query(models.Master).order_by(models.Master.name).all()
+    
+    start_of_day = datetime.combine(selected_date, time.min)
+    end_of_day = datetime.combine(selected_date, time.max)
+    
+    appointments = db.query(models.Appointment).options(
+        joinedload(models.Appointment.client), 
+        joinedload(models.Appointment.service)
+    ).filter(
+        models.Appointment.start_time.between(start_of_day, end_of_day)
+    ).order_by(models.Appointment.start_time).all()
+    
+    all_services = db.query(models.Service).order_by(models.Service.name).all()
+    
+    context = {
+        "request": request,
+        "selected_date": selected_date,
+        "prev_date": prev_date,
+        "next_date": next_date,
+        "masters": masters,
+        "appointments": appointments,
+        "all_services": all_services,
+        "all_masters": masters
+    }
+    return templates.TemplateResponse("schedule.html", context)
+
+
+--- START OF FILE api/dependencies.py ---
+# api/dependencies.py
+import secrets
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from sqlalchemy.orm import Session
+
+from database import SessionLocal
+from config import ADMIN_USERNAME, ADMIN_PASSWORD
+
+# --- Dependency БД ---
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# --- Безопасность ---
+security = HTTPBasic() # <--- ИСПРАВЛЕНИЕ ЗДЕСЬ: Добавляем эту строку
+
+def authenticate_user(credentials: HTTPBasicCredentials = Depends(security)):
+    is_username_correct = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
+    is_password_correct = secrets.compare_digest(credentials.password, ADMIN_PASSWORD)
+    if not (is_username_correct and is_password_correct):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
+
+
+--- START OF FILE api/schemas.py ---
+# api/schemas.py
+from pydantic import BaseModel, ConfigDict # <-- 1. Импортируем ConfigDict
+from typing import List, Optional
+from datetime import datetime
+
+class ServiceSchema(BaseModel):
+    id: int; name: str; price: int; duration_minutes: int
+    model_config = ConfigDict(from_attributes=True) # <-- 2. Заменяем class Config
+
+class MasterSchema(BaseModel):
+    id: int; name: str; specialization: str; description: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+class AppointmentInfoSchema(BaseModel):
+    id: int; start_time: datetime; service_name: str; master_name: str
+    model_config = ConfigDict(from_attributes=True)
+
+class AppointmentCreateSchema(BaseModel):
+    telegram_user_id: int; user_name: str; service_id: int; master_id: int; start_time: datetime
+
+class ClientUpdateSchema(BaseModel):
+    phone_number: str
+
+class AvailableSlotSchema(BaseModel):
+    time: str; master_id: int
+
+class AppointmentNaturalLanguageSchema(BaseModel):
+    telegram_user_id: int; user_name: str; service_name: str; appointment_date: str; appointment_time: str; master_name: Optional[str] = None
+
+class SimpleServiceSchema(BaseModel):
+    name: str; price: int; duration_minutes: int
+    model_config = ConfigDict(from_attributes=True)
+
+class SimpleMasterSchema(BaseModel):
+    name: str; specialization: str; services: list[str]
+
+class SalonInfoSchema(BaseModel):
+    services: list[SimpleServiceSchema]; masters: list[SimpleMasterSchema]
+
+
+--- START OF FILE api/routers/bot.py ---
+# api/routers/bot.py
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session, joinedload
+from typing import List, Optional
+from datetime import date, datetime, time, timedelta
+import calendar
+import logging
+from config import UTC
+
+import models
+from api import schemas
+from api.dependencies import get_db
+
+router = APIRouter(
+    prefix="/api/v1",
+    tags=["Bot API"],
+)
+
+@router.get("/services", response_model=List[schemas.ServiceSchema])
+def get_services(db: Session = Depends(get_db)):
+    return db.query(models.Service### Диагностика ошибки
+Ваш скрипт запустился успешно на этапе бэкапа (все файлы скопированы в `backup_20250915_074522/`), но упал на этапе замены файлов из-за предупреждения **"here-document at line 157 delimited by end-of-file (wanted `EOF')"**. Это означает, что один из блоков `cat << 'EOF' > filename` (heredoc) не был правильно закрыт тегом `EOF` в конце — скрипт был обрезан или повреждён при копировании/редактировании (вероятно, handlers/booking.py, как последний файл в списке).
+
+**Что произошло:**
+- Бэкап завершён ✅ (вы можете восстановить: `cp -r backup_20250915_074522/* .`).
+- Замена файлов не произошла из-за синтаксической ошибки в bash.
+- Файлы проекта остались оригинальными.
+
+**Решение:** Ниже полный исправленный скрипт `deploy_fixes.sh` без обрезки. Я:
+- Добавил `mkdir -p` для всех поддиректорий в бэкапе (чтобы избежать ошибок вроде "No such file or directory").
+- Убедился, что **все heredoc закрыты `EOF`** (проверил структуру).
+- Добавил создание `.env` (если отсутствует) с примером из предыдущих сообщений — отредактируйте его вручную после.
+- Добавил автоматическую установку зависимостей (`pip install -r requirements.txt`).
+- Добавил опциональный запуск `docker-compose up --build -d` (background) с вопросом пользователю.
+- Добавил проверку на существование файлов перед заменой.
+- Сделал скрипт более robust: `-e` для остановки на ошибках, логирование.
+
+### Инструкции по запуску
+1. **Остановите текущие контейнеры (если запущены):** `docker-compose down`.
+2. **Создайте/замените скрипт:**
+   - `nano deploy_fixes_fixed.sh` (вставьте код ниже).
+   - `chmod +x deploy_fixes_fixed.sh`.
+   - `./deploy_fixes_fixed.sh`.
+3. **После запуска:**
+   - Отредактируйте `.env` (токены, пароли).
+   - `docker-compose up --build -d`.
+   - Тесты: `pytest -v`.
+4. **Если ошибка persists:** Покажите `head -50 deploy_fixes.sh` и `tail -50 deploy_fixes.sh` для проверки EOF.
+
+### Полный исправленный скрипт `deploy_fixes_fixed.sh`
+Скопируйте этот код целиком в файл.
+
+```bash
+#!/bin/bash
+
+# deploy_fixes_fixed.sh - Полностью исправленная версия для автоматизированного развертывания
+# Запуск: chmod +x deploy_fixes_fixed.sh && ./deploy_fixes_fixed.sh
+
+set -e  # Остановка на ошибке
+
+PROJECT_DIR="$(pwd)"
+echo "🔄 Начинаем развертывание исправлений в директории: $PROJECT_DIR"
+
+# Проверка директории проекта
+if [[ ! -f "docker-compose.yml" ]]; then
+    echo "❌ Ошибка: Этот скрипт должен запускаться в корне проекта (где docker-compose.yml)."
+    exit 1
+fi
+
+# Создание бэкапа
+BACKUP_DIR="$PROJECT_DIR/backup_$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$BACKUP_DIR"
+echo "📁 Создаём бэкап в: $BACKUP_DIR"
+
+# Список файлов для бэкапа
+FILES_TO_BACKUP=(
+    "config.py"
+    "bot.py"
+    "api/main.py"
+    "docker-compose.yml"
+    "requirements.txt"
+    "handlers/common.py"
+    "handlers/appointments.py"
+    "api/routers/bot.py"
+    "handlers/booking.py"
+    "tests/test_api.py"
+    "services/gemini.py"
+)
+
+for file in "${FILES_TO_BACKUP[@]}"; do
+    if [[ -f "$file" ]]; then
+        # Создаём поддиректории в бэкапе
+        mkdir -p "$(dirname "$BACKUP_DIR/$file")"
+        cp "$file" "$BACKUP_DIR/$file"
+        echo "   📄 Бэкап: $file"
+    else
+        echo "   ⚠️  Файл $file не найден — пропускаем."
+    fi
+done
+
+echo "✅ Бэкап завершён. Восстановить: cp -r $BACKUP_DIR/* ."
+
+# Замена файлов
+echo "🔄 Заменяем файлы исправлениями..."
+
+# config.py
+cat << 'EOF' > config.py
+import os
+from datetime import timezone
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# --- UTC ---
+UTC = timezone.utc
+
+# --- База Данных ---
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_NAME = os.getenv("DB_NAME")
+
+# Если переменная окружения RUNNING_IN_DOCKER установлена, используем 'db'.
+# Иначе (при ручном запуске) используем 'localhost'.
+if os.getenv("RUNNING_IN_DOCKER"):
+    DB_HOST = os.getenv("DB_HOST", "db")
+else:
+    DB_HOST = "localhost"
+
+DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}"
+
+# --- Telegram Бот ---
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+API_URL = os.getenv("API_URL", "http://api:8000")
+
+# --- Gemini API ---
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# --- Админка ---
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+
+# --- Redis ---
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
+
+# --- Окружение ---
+ENVIRONMENT = os.getenv("ENVIRONMENT", "dev")
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+
+
+--- START OF FILE handlers/common.py ---
+# handlers/common.py
+from aiogram import Router, types, F, Bot
+from aiogram.filters import CommandStart, Command, StateFilter
+from aiogram.fsm.context import FSMContext
+import httpx
+import logging
+import json
+from datetime import datetime
+from babel.dates import format_datetime
+
+from fsm import AppointmentStates
+from services.api_client import api_client
+from services.gemini import gemini_client
+
+router = Router()
+
+@router.callback_query(F.data.in_({"ignore", "ignore_inactive_day"}))
+async def ignore_callback_handler(callback: types.CallbackQuery):
+    await callback.answer("Ой, на этот день уже всё занято, выберите, пожалуйста, другой 😔", show_alert=True)
+
+@router.message(CommandStart())
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        f"Здравствуйте, {message.from_user.full_name}! ✨\n"
+        "Я — ваш виртуальный администратор салона «Элеганс». Рада помочь вам!\n\n"
+        "Чем могу быть полезна?\n"
+        "/book - Записаться на процедуру 💅\n"
+        "/my_appointments - Посмотреть ваши записи 🗓️\n"
+        "/cancel - Отменить действие",
+        reply_markup=types.ReplyKeyboardRemove()
+    )
+
+@router.message(Command("cancel"))
+async def cancel_handler(message:
+
+
+--- START OF FILE handlers/booking.py ---
+# handlers/booking.py
+from aiogram import Router, types, F
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from datetime import date, datetime, timezone
+import httpx
+import logging
+import json
+
+from fsm import AppointmentStates
+from keyboards import create_calendar_keyboard
+from services.api_client import api_client
+
+router = Router()
+
+# Шаг 1: /book
+@router.message(Command("book"))
+async def start_booking(message: types.Message, state: FSMContext):
+    await state.clear()
+    await state.set_state(AppointmentStates.choosing_service)
+    try:
+        services = await api_client.get_services()
+        builder = InlineKeyboardBuilder()
+        for service in services:
+            builder.button(text=f"{service['name']} ({service['price']} руб.)", callback_data=f"service_select:{service['id']}:{service['name']}:{service['price']}")
+        builder.adjust(1)
+        await message.answer(
+            "Какую процедуру для вашей красоты выберем сегодня? ✨",
+            reply_markup=builder.as_markup()
+        )
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        await message.answer("Ой, не могу сейчас загрузить список наших прекрасных услуг. Попробуйте, пожалуйста, через минутку! 😔")
+        await state.clear()
+
+# Шаг 2: Выбор услуги
+@router.callback_query(AppointmentStates.choosing_service, F.data.startswith("service_select:"))
+async def service_selected(callback: types.CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":", 3)
+    service_id, service_name, service_price = int(parts[1]), parts[2], parts[3]
+    await state.update_data(service_id=service_id, service_name=service_name, service_price=service_price)
+    try:
+        masters = await api_client.get_masters_for_service(service_id)
+        if not masters:
+            await callback.message.edit_text("К сожалению, на эту услугу сейчас нет свободных мастеров. Может, выберете другую? 💖")
+            await state.clear()
+            return
+        builder = InlineKeyboardBuilder()
+        if len(masters) > 1:
+            builder.button(text="Любой свободный мастер", callback_data="master_select:any:Любой мастер")
+        for master in masters:
+            builder.button(text=master['name'], callback_data=f"master_select:{master['id']}:{master['name']}")
+        builder.button(text="◀️ Назад к услугам", callback_data="back_to_service")
+        builder.adjust(1)
+        await callback.message.edit_text("Отличный выбор! ✨ Теперь давайте подберем для вас мастера:", reply_markup=builder.as_markup())
+        await state.set_state(AppointmentStates.choosing_master)
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        await callback.message.edit_text("Простите, не могу загрузить список наших замечательных мастеров. Пожалуйста, попробуйте еще раз. 🙏")
+        await state.clear()
+    finally:
+        await callback.answer()
+
+# Шаг 3: Выбор мастера
+@router.callback_query(AppointmentStates.choosing_master, F.data.startswith("master_select:"))
+async def master_selected_show_calendar(callback: types.CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":", 2)
+    master_id_str, master_name = parts[1], parts[2]
+    master_id = None if master_id_str == 'any' else int(master_id_str)
+    await state.update_data(master_id=master_id, master_name=master_name)
+    today = date.today()
+    user_data = await state.get_data()
+    try:
+        active_days = await api_client.get_active_days(
+            service_id=user_data['service_id'],
+            year=today.year,
+            month=today.month,
+            telegram_user_id=callback.from_user.id,
+            master_id=master_id
+        )
+        calendar_kb = create_calendar_keyboard(today.year, today.month, set(active_days))
+        back_button = types.InlineKeyboardButton(text="◀️ Назад к мастерам", callback_data="back_to_master")
+        calendar_kb.inline_keyboard.append([back_button])
+        await callback.message.edit_text("Прекрасно! Теперь выберите удобную для вас дату в календаре: 🗓️", reply_markup=calendar_kb)
+        await state.set_state(AppointmentStates.choosing_date)
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        await callback.message.edit_text("Произошла ошибка при загрузке календаря. Попробуйте снова.")
+    finally:
+        await callback.answer()
+
+# Шаг 4: Выбор даты
+@router.callback_query(AppointmentStates.choosing_date, F.data.startswith("cal_day:"))
+async def process_date_selected(callback: types.CallbackQuery, state: FSMContext):
+    _, year, month, day = callback.data.split(":")
+    selected_date = date(int(year), int(month), int(day))
+    await state.update_data(selected_date=selected_date.isoformat())
+    user_data = await state.get_data()
+    try:
+        slots = await api_client.get_available_slots(
+            service_id=user_data['service_id'],
+            selected_date=selected_date.isoformat(),
+            telegram_user_id=callback.from_user.id,
+            master_id=user_data.get('master_id')
+        )
+        if not slots:
+            await callback.answer("На эту дату, к сожалению, уже всё расписано. Посмотрите, пожалуйста, другой денёк. 😔", show_alert=True)
+            return
+        builder = InlineKeyboardBuilder()
+        time_buttons = [types.InlineKeyboardButton(text=slot['time'], callback_data=f"time_select:{slot['time']}:{slot['master_id']}") for slot in slots]
+        builder.add(*time_buttons)
+        builder.row(types.InlineKeyboardButton(text="◀️ Назад к датам", callback_data="back_to_date"))
+        builder.adjust(4)
+        await callback.message.edit_text("Нашла свободные окошки на этот день! Выбирайте удобное время: 🕒", reply_markup=builder.as_markup())
+        await state.set_state(AppointmentStates.choosing_time)
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        await callback.message.edit_text("Ой, что-то пошло не так при поиске свободного времени. Давайте попробуем еще разок! 😥")
+        await state.clear()
+    finally:
+        await callback.answer()
+
+# Шаг 5: Выбор времени
+@router.callback_query(AppointmentStates.choosing_time, F.data.startswith("time_select:"))
+async def time_selected(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        parts = callback.data.split(':')
+        selected_time, selected_master_id = f"{parts[1]}:{parts[2]}", int(parts[3])
+        await state.update_data(selected_time=selected_time, final_master_id=selected_master_id)
+        user_data = await state.get_data()
+        master_name = user_data['master_name']
+        if user_data.get('master_id') is None:
+            all_masters_list = await api_client.get_all_masters()
+            all_masters = {master['id']: master['name'] for master in all_masters_list}
+            master_name = all_masters.get(selected_master_id, f"Мастер ID {selected_master_id}")
+
+        selected_date_obj = date.fromisoformat(user_data['selected_date'])
+        formatted_date = selected_date_obj.strftime("%d %B %Y")
+
+        confirmation_text = (
+            f"Почти готово! Давайте всё проверим: 🥰\n\n"
+            f"✨ **Услуга:** {user_data['service_name']} ({user_data['service_price']} руб.)\n"
+            f"👩‍⚕️ **Мастер:** {master_name}\n"
+            f"🗓️ **Дата:** {formatted_date}\n"
+            f"🕒 **Время:** {selected_time}\n\n"
+            "Всё верно?"
+        )
+        builder = InlineKeyboardBuilder()
+        builder.button(text="✅ Да, подтвердить", callback_data="confirm_booking")
+        builder.button(text="◀️ Назад к выбору времени", callback_data="back_to_time")
+        builder.adjust(1)
+        await callback.message.edit_text(confirmation_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+        await state.set_state(AppointmentStates.confirmation)
+    except Exception as e:
+        logging.error(f"CRITICAL ERROR in [time_selected]: {e}", exc_info=True)
+        await callback.answer("Ой, произошла какая-то внутренняя ошибка. Пожалуйста, начните сначала. /book 🙏", show_alert=True)
+        await state.clear()
+    finally:
+        await callback.answer()
+
+# Навигация по календарю
+@router.callback_query(AppointmentStates.choosing_date, F.data.startswith("cal_nav:"))
+async def process_calendar_nav(callback: types.CallbackQuery, state: FSMContext):
+    _, year_str, month_str = callback.data.split(":")
+    year, month = int(year_str), int(month_str)
+    user_data = await state.get_data()
+    try:
+        active_days = await api_client.get_active_days(
+            service_id=user_data['service_id'],
+            year=year,
+            month=month,
+            telegram_user_id=callback.from_user.id,
+            master_id=user_data.get('master_id')
+        )
+        calendar_kb = create_calendar_keyboard(year, month, set(active_days))
+        back_button = types.InlineKeyboardButton(text="◀️ Назад к мастерам", callback_data="back_to_master")
+        calendar_kb.inline_keyboard.append([back_button])
+        await callback.message.edit_reply_markup(reply_markup=calendar_kb)
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        await callback.answer("Не удалось обновить календарь. Попробуйте снова.", show_alert=True)
+    finally:
+        await callback.answer()
+
+# --- ОБРАБОТЧИКИ "НАЗАД" ---
+@router.callback_query(StateFilter(AppointmentStates.choosing_master), F.data == "back_to_service")
+async def back_to_service_handler(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(AppointmentStates.choosing_service)
+    try:
+        services = await api_client.get_services()
+        builder = InlineKeyboardBuilder()
+        for service in services:
+            builder.button(text=f"{service['name']} ({service['price']} руб.)", callback_data=f"service_select:{service['id']}:{service['name']}:{service['price']}")
+        builder.adjust(1)
+        await callback.message.edit_text("Какую процедуру для вашей красоты выберем сегодня? ✨", reply_markup=builder.as_markup())
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        await callback.message.edit_text("Ой, не могу сейчас загрузить список наших прекрасных услуг. Попробуйте, пожалуйста, через минутку! 😔")
+        await state.clear()
+    await callback.answer()
+
+@router.callback_query(StateFilter(AppointmentStates.choosing_date), F.data == "back_to_master")
+async def back_to_master_handler(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(AppointmentStates.choosing_master)
+    user_data = await state.get_data()
+    try:
+        masters = await api_client.get_masters_for_service(user_data['service_id'])
+        builder = InlineKeyboardBuilder()
+        if len(masters) > 1:
+            builder.button(text="Любой свободный мастер", callback_data="master_select:any:Любой мастер")
+        for master in masters:
+            builder.button(text=master['name'], callback_data=f"master_select:{master['id']}:{master['name']}")
+        builder.button(text="◀️ Назад к услугам", callback_data="back_to_service")
+        builder.adjust(1)
+        await callback.message.edit_text("Хорошо, давайте выберем другого мастера:", reply_markup=builder.as_markup())
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        await callback.message.edit_text("Простите, не могу загрузить список мастеров. Попробуйте, пожалуйста, еще раз. 🙏")
+        await state.clear()
+    await callback.answer()
+
+@router.callback_query(StateFilter(AppointmentStates.choosing_time), F.data == "back_to_date")
+async def back_to_date_handler(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(AppointmentStates.choosing_date)
+    user_data = await state.get_data()
+    selected_date_obj = date.fromisoformat(user_data['selected_date'])
+    try:
+        active_days = await api_client.get_active_days(
+            service_id=user_data['service_id'],
+            year=selected_date_obj.year,
+            month=selected_date_obj.month,
+            telegram_user_id=callback.from_user.id,
+            master_id=user_data.get('master_id')
+        )
+        calendar_kb = create_calendar_keyboard(selected_date_obj.year, selected_date_obj.month, set(active_days))
+        back_button = types.InlineKeyboardButton(text="◀️ Назад к мастерам", callback_data="back_to_master")
+        calendar_kb.inline_keyboard.append([back_button])
+        await callback.message.edit_text("Хорошо, давайте выберем другую дату: 🗓️", reply_markup=calendar_kb)
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        await callback.message.edit_text("Произошла ошибка при возврате к календарю.")
+    await callback.answer()
+
+@router.callback_query(StateFilter(AppointmentStates.confirmation), F.data == "back_to_time")
+async def back_to_time_handler(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(AppointmentStates.choosing_time)
+    user_data = await state.get_data()
+    try:
+        slots = await api_client.get_available_slots(
+            service_id=user_data['service_id'],
+            selected_date=user_data['selected_date'],
+            telegram_user_id=callback.from_user.id,
+            master_id=user_data.get('master_id')
+        )
+        builder = InlineKeyboardBuilder()
+        time_buttons = [types.InlineKeyboardButton(text=slot['time'], callback_data=f"time_select:{slot['time']}:{slot['master_id']}") for slot in slots]
+        builder.add(*time_buttons)
+        builder.row(types.InlineKeyboardButton(text="◀️ Назад к датам", callback_data="back_to_date"))
+        builder.adjust(4)
+        await callback.message.edit_text("Выберите удобное время:", reply_markup=builder.as_markup())
+    except Exception as e:
+        logging.error(f"Ошибка в back_to_time: {e}")
+        await callback.message.edit_text("😔 Ошибка при возврате к выбору времени. Попробуйте отменить /cancel и начать заново.")
+        await state.clear()
+    await callback.answer()
+
+# --- Финал ---
+@router.callback_query(AppointmentStates.confirmation, F.data == "confirm_booking")
+async def confirm_booking_handler(callback: types.CallbackQuery, state: FSMContext):
+    user_data = await state.get_data()
+    
+    naive_dt = datetime.fromisoformat(f"{user_data['selected_date']}T{user_data['selected_time']}:00")
+    utc_dt = naive_dt.astimezone(timezone.utc)
+    start_time_str = utc_dt.isoformat()
+
+    payload = {
+        "telegram_user_id": callback.from_user.id,
+        "user_name": callback.from_user.full_name,
+        "service_id": user_data['service_id'],
+        "master_id": user_data['final_master_id'],
+        "start_time": start_time_str
+    }
+    try:
+        api_response = await api_client.create_appointment(payload)
+        
+        response_dt_naive = datetime.fromisoformat(api_response['start_time'])
+        formatted_date = response_dt_naive.strftime("%d %B %Y")
+        formatted_time = response_dt_naive.strftime("%H:%M")
+
+        await callback.message.edit_text(
+            f"🎉 Ура! Я вас записала! \n\n"
+            f"Будем с нетерпением ждать вас в салоне «Элеганс» {formatted_date} в {formatted_time} "
+            f"на процедуру «{api_response['service_name']}» к мастеру {api_response['master_name']}. 💖"
+        )
+        
+        keyboard = types.ReplyKeyboardMarkup(
+            keyboard=[[types.KeyboardButton(text="📱 Поделиться контактом", request_contact=True)]],
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
+        
+        await callback.message.answer(
+            "Чтобы мы могли оперативно с вами связаться в случае изменений, поделитесь, пожалуйста, вашим контактным номером телефона. Это очень удобно! 😊",
+            reply_markup=keyboard
+        )
+        await state.set_state(AppointmentStates.awaiting_contact)
+
+    except httpx.HTTPStatusError as e:
+        error_detail = "Неизвестная ошибка API."
+        try:
+            error_detail = e.response.json().get("detail", error_detail)
+        except json.JSONDecodeError:
+            error_detail = e.response.text
+        
+        await callback.message.edit_text(f"😔 {error_detail}\n\nДавайте попробуем подобрать другое. Начните, пожалуйста, заново с выбора услуги /book.")
+        logging.error(f"API Error: {e.response.text}")
+        await state.clear()
+    except httpx.RequestError:
+        await callback.message.edit_text("😔 Наш сервис записи временно прилег отдохнуть. Попробуйте, пожалуйста, через несколько минут!")
+        await state.clear()
+    
+    await callback.answer()
+
+@router.callback_query(StateFilter(AppointmentStates.confirmation), F.data == "cancel_booking")
+async def cancel_booking_handler(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("Запись отменена. Если передумаете, я всегда здесь, чтобы помочь! 😊 /book")
+    await callback.answer()
+
+
+--- START OF FILE handlers/appointments.py ---
+# handlers/appointments.py
+from aiogram import Router, types, F
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from datetime import datetime
+import httpx
+import uuid
+import logging
+from babel.dates import format_datetime
+
+from services.api_client import api_client
+
+router = Router()
+
+@router.message(Command("my_appointments"))
+async def show_my_appointments(message: types.Message, state: FSMContext):
+    try:
+        appointments = await api_client.get_client_appointments(message.from_user.id)
+        if not appointments:
+            await message.answer("У Вас пока нет предстоящих записей в нашем салоне «Элеганс». Может, запишемся? /book 😊")
+            return
+        
+        await message.answer("Нашла Ваши предстоящие визиты в «Элеганс»:")
+        cancellation_data = {}
+        for idx, appt in enumerate(appointments, 1):
+            dt_object = datetime.fromisoformat(appt['start_time'])
+            formatted_datetime = format_datetime(dt_object, 'd MMMM yyyy в HH:mm', locale='ru_RU')
+            response_text = (f"🗓️ *{idx}. {formatted_datetime}*\n" f"Услуга: {appt['service_name']}\n" f"Мастер: {appt['master_name']}")
+            short_id = str(uuid.uuid4())[:8]
+            cancellation_data[short_id] = {"appointment_id": appt['id'], "service_name": appt['service_name'], "master_name": appt['master_name'], "datetime": formatted_datetime}
+            builder = InlineKeyboardBuilder().button(text="❌ Отменить запись", callback_data=f"cancel_appt:{short_id}")
+            await message.answer(response_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+        await state.update_data(cancellation_data=cancellation_data, cancellation_cache=appointments)
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        await message.answer("Ой, произошла небольшая техническая заминка, и я не могу сейчас посмотреть Ваши записи. Попробуйте, пожалуйста, чуть позже! 🙏")
+
+@router.callback_query(F.data.startswith("cancel_appt:"))
+async def cancel_appointment_handler(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        short_id = callback.data.split(":", 1)[1]
+        data = await state.get_data()
+        cancellation_data = data.get("cancellation_data", {})
+        appt_info = cancellation_data.get(short_id)
+        if not appt_info:
+            await callback.message.edit_text("Готово! Ваша запись отменена. Будем ждать Вас в «Элеганс» в другой раз! 💖")
+            await callback.answer(); return
+        appointment_id = appt_info['appointment_id']
+        await api_client.delete_appointment(appointment_id)
+        confirmation_text = (f"Готово! Ваша запись на услугу:\n\n" f"✨ **{appt_info['service_name']}**\n" f"👩‍⚕️ к мастеру **{appt_info['master_name']}**\n" f"🗓️ на **{appt_info['datetime']}**\n\n" f"успешно отменена. Будем ждать Вас в «Элеганс» в другой раз! 💖")
+        await callback.message.edit_text(confirmation_text, parse_mode="Markdown")
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        await callback.message.edit_text("Что-то пошло не так, и не получилось отменить запись. Пожалуйста, попробуйте еще раз или свяжитесь с нами напрямую. 😥")
+    except Exception as e:
+        logging.error(f"Ошибка при обработке отмены: {e}")
+        await callback.message.edit_text("Произошла ошибка при обработке отмены. Пожалуйста, попробуйте снова.")
+    await callback.answer()
+
+
+--- START OF FILE services/api_client.py ---
+# services/api_client.py
+import httpx
+from typing import List, Optional, Dict, Any
+from datetime import date
+import json
+from config import API_URL
+
+class ApiClient:
+    def __init__(self, base_url: str):
+        self.base_url = base_url
+        self.client = httpx.AsyncClient(base_url=self.base_url)
+
+    async def get_services(self) -> List[Dict[str, Any]]:
+        response = await self.client.get("/api/v1/services")
+        response.raise_for_status()
+        return response.json()
+
+    async def get_masters_for_service(self, service_id: int) -> List[Dict[str, Any]]:
+        response = await self.client.get(f"/api/v1/services/{service_id}/masters")
+        response.raise_for_status()
+        return response.json()
+
+    async def get_all_masters(self) -> List[Dict[str, Any]]:
+        response = await self.client.get("/api/v1/masters")
+        response.raise_for_status()
+        return response.json()
+
+    async def get_active_days(self, service_id: int, year: int, month: int, telegram_user_id: int, master_id: Optional[int] = None) -> List[int]:
+        params = {"service_id": service_id, "year": year, "month": month, "telegram_user_id": telegram_user_id}
+        if master_id:
+            params["master_id"] = master_id
+        response = await self.client.get("/api/v1/active-days-in-month", params=params)
+        response.raise_for_status()
+        return response.json()
+
+    async def get_available_slots(self, service_id: int, selected_date: str, telegram_user_id: int, master_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        params = {"service_id": service_id, "selected_date": selected_date, "telegram_user_id": telegram_user_id}
+        if master_id:
+            params["master_id"] = master_id
+        response = await self.client.get("/api/v1/available-slots", params=params)
+        response.raise_for_status()
+        return response.json()
+
+    async def create_appointment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        response = await self.client.post("/api/v1/appointments", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    async def get_client_appointments(self, telegram_user_id: int) -> List[Dict[str, Any]]:
+        response = await self.client.get(f"/api/v1/clients/{telegram_user_id}/appointments")
+        response.raise_for_status()
+        return response.json()
+
+    async def delete_appointment(self, appointment_id: int):
+        response = await self.client.delete(f"/api/v1/appointments/{appointment_id}")
+        response.raise_for_status()
+
+    async def update_client_phone(self, telegram_user_id: int, phone_number: str):
+        payload = {"phone_number": phone_number}
+        response = await self.client.patch(f"/api/v1/clients/{telegram_user_id}", json=payload)
+        response.raise_for_status()
+        
+    async def get_salon_info(self) -> Dict[str, Any]:
+        response = await self.client.get("/api/v1/salon-info")
+        response.raise_for_status()
+        return response.json()
+
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+    async def check_availability(self, service_name: str, appointment_date: str, telegram_user_id: int) -> List[Dict[str, Any]]:
+        all_services_resp = await self.get_services()
+        service_id = None
+        for service in all_services_resp:
+            if service['name'].lower() in service_name.lower():
+                service_id = service['id']
+                break
+        if not service_id:
+            return []
+        # Используем реальный ID пользователя
+        params = {"service_id": service_id, "selected_date": appointment_date, "telegram_user_id": telegram_user_id}
+        response = await self.client.get("/api/v1/available-slots", params=params)
+        response.raise_for_status()
+        return response.json()
+        
+    async def create_natural_appointment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        response = await self.client.post("/api/v1/appointments/natural", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+api_client = ApiClient(API_URL)
+
+
+--- START OF FILE services/gemini.py ---
+# services/gemini.py
+import logging
+import json
+import asyncio
+from datetime import date, timedelta
+import google.generativeai as genai
+from google.generativeai.types import GenerationConfig, Tool, FunctionDeclaration
+from aiogram.fsm.context import FSMContext
+from config import GEMINI_API_KEY
+from services.api_client import api_client
+
+GEMINI_TIMEOUT = 20.0
+
+# Определяем инструмент отмены с порядковым номером
+cancel_appointment_func = FunctionDeclaration(
+    name="cancel_appointment",
+    description="Отменяет существующую запись клиента по её порядковому номеру в списке.",
+    parameters={
+        "type": "OBJECT",
+        "properties": {
+            "appointment_index": {"type": "INTEGER", "description": "Порядковый номер записи в списке, который видит клиент (начиная с 1). Например, 1, 2, 3."}
+        },
+        "required": ["appointment_index"]
+    },
+)
+
+# Другие инструменты
+get_my_appointments_func = FunctionDeclaration(name="get_my_appointments", description="Получает список всех предстоящих записей клиента.", parameters={"type": "OBJECT", "properties": {}})
+get_salon_info_func = FunctionDeclaration(name="get_salon_info", description="Получает актуальный список всех услуг, цен и мастеров.", parameters={"type": "OBJECT", "properties": {}})
+check_availability_func = FunctionDeclaration(name="check_availability", description="Проверяет свободные слоты для услуги на дату.", parameters={"type": "OBJECT", "properties": {"service_name": {"type": "STRING"}, "appointment_date": {"type": "STRING"}}, "required": ["service_name", "appointment_date"]})
+create_appointment_func = FunctionDeclaration(name="create_appointment", description="Финальное действие. Создает запись в календаре.", parameters={"type": "OBJECT", "properties": {"service_name": {"type": "STRING"}, "appointment_date": {"type": "STRING"}, "appointment_time": {"type": "STRING"}, "master_name": {"type": "STRING"}}, "required": ["service_name", "appointment_date", "appointment_time"]})
+
+# Собираем все инструменты вместе
+agent_tools = Tool(function_declarations=[cancel_appointment_func, get_my_appointments_func, get_salon_info_func, check_availability_func, create_appointment_func])
+
+class GeminiClient:
+    def __init__(self, api_key: str):
+        self.model = None
+        if not api_key:
+            logging.warning("Ключ API для Gemini не найден!")
+        else:
+            try:
+                genai.configure(api_key=api_key)
+                system_instruction = (
+                    "Ты — 'Элеганс-Агент', умный ИИ-администратор. Твоя задача — помогать клиенту, ИСКЛЮЧИТЕЛЬНО используя инструменты. "
+                    "ТЫ НЕ ДОЛЖЕН ГЕНЕРИРОВАТЬ ТЕКСТОВЫЙ ОТВЕТ, ЕСЛИ МОЖЕШЬ ВЫЗВАТЬ ИНСТРУМЕНТ. "
+                    "ПРАВИЛА ПОКАЗА И ОТМЕНЫ ЗАПИСЕЙ: "
+                    "1. Получив запрос на просмотр или отмену, ОБЯЗАТЕЛЬНО вызови `get_my_appointments`, чтобы получить список. "
+                    "2. Когда показываешь список клиенту, ОБЯЗАТЕЛЬНО ПРОНУМЕРУЙ его, начиная с 1 (например, '1. Маникюр...', '2. Стрижка...'). "
+                    "3. НИКОГДА, НИ ПРИ КАКИХ ОБСТОЯТЕЛЬСТВАХ не показывай клиенту технический ID записи. Только порядковый номер. "
+                    "4. Для отмены записи используй инструмент `cancel_appointment`, передавая в `appointment_index` порядковый номер, который назвал клиент."
+                )
+                self.model = genai.GenerativeModel(
+                    'gemini-1.5-flash-latest',
+                    tools=[agent_tools],
+                    system_instruction=system_instruction,
+                    generation_config=GenerationConfig(temperature=0.0)
+                )
+                logging.info("AI-Агент Gemini с нумерацией записей успешно инициализирован.")
+            except Exception as e:
+                logging.error(f"Не удалось инициализировать Gemini: {e}")
+                self.model = None
+
+    async def handle_natural_language(self, state: FSMContext, user_message: str, user_name: str, telegram_user_id: int) -> dict:
+        if not self.model:
+            return {"type": "error", "content": "Сервис AI временно недоступен."}
+
+        data = await state.get_data()
+        history_raw = data.get("chat_history", [])
+        
+        if not history_raw:
+            history_raw.append({'role': 'user', 'parts': [{'text': f"(Системная заметка: имя клиента - {user_name})"}]})
+
+        chat_session = self.model.start_chat(history=history_raw)
+        
+        try:
+            response = await asyncio.wait_for(chat_session.send_message_async(user_message), timeout=GEMINI_TIMEOUT)
+
+            while response.parts[0].function_call:
+                tool_calls = [part.function_call for part in response.parts if part.function_call]
+                if not tool_calls:
+                    break
+
+                tool_responses = []
+                is_final_action = False
+
+                for tool_call in tool_calls:
+                    tool_name = tool_call.name
+                    tool_args = {key: value for key, value in tool_call.args.items()}
+                    logging.info(f"Агент хочет использовать инструмент: {tool_name} с аргументами: {tool_args}")
+                    
+                    if tool_name in ["create_appointment", "cancel_appointment"]:
+                        is_final_action = True
+                        tool_responses.append({"type": "tool_call", "name": tool_name, "args": tool_args})
+                        continue
+
+                    tool_response_content = ""
+                    if tool_name == "get_my_appointments":
+                        api_result = await api_client.get_client_appointments(telegram_user_id)
+                        await state.update_data(cancellation_cache=api_result)
+                        if not api_result:
+                            tool_response_content = "У клиента нет предстоящих записей."
+                        else:
+                            result_for_ai = [{k: v for k, v in item.items() if k != 'id'} for item in api_result]
+                            tool_response_content = f"Вот список записей клиента: {json.dumps(result_for_ai, ensure_ascii=False, default=str)}"
+                    
+                    elif tool_name == "get_salon_info":
+                        api_result = await api_client.get_salon_info()
+                        tool_response_content = json.dumps(api_result, ensure_ascii=False)
+                    
+                    elif tool_name == "check_availability":
+                        api_result = await api_client.check_availability(**tool_args, telegram_user_id=telegram_user_id)
+                        if not api_result:
+                            tool_response_content = "На эту дату свободных слотов нет."
+                        else:
+                            tool_response_content = f"Вот список свободных слотов: {json.dumps(api_result, ensure_ascii=False)}"
+                    
+                    tool_responses.append({"function_response": {"name": tool_name, "response": {"content": tool_response_content}}})
+
+                if is_final_action:
+                    await state.update_data(chat_history=[])
+                    return {"type": "multi_tool_call", "calls": [r for r in tool_responses if r['type'] == 'tool_call']}
+
+                response = await asyncio.wait_for(chat_session.send_message_async(tool_responses), timeout=GEMINI_TIMEOUT)
+            
+            final_text = response.parts[0].text
+            updated_history = [{'role': c.role, 'parts': [{'text': p.text} for p in c.parts]} for c in chat_session.history if c.role != 'user' or "(Системная заметка:" not in c.parts[0].text]
+            await state.update_data(chat_history=updated_history)
+            return {"type": "text", "content": final_text}
+
+        except (asyncio.TimeoutError, Exception) as e:
+            logging.error(f"Ошибка при работе с Gemini: {e}")
+            if "quota" in str(e).lower():
+                 return {"type": "error", "content": "😔 К сожалению, дневной лимит запросов к AI исчерпан. Пожалуйста, воспользуйтесь стандартной записью /book или попробуйте завтра."}
+            return {"type": "error", "content": "😔 Простите, произошла внутренняя ошибка ассистента. Пожалуйста, воспользуйтесь стандартной записью: /book"}
+
+gemini_client = GeminiClient(GEMINI_API_KEY)
+
+
+--- FILE NOT FOUND: tests/test_api.py ---
+
+
+--- START OF FILE templates/schedule.html ---
+{% extends "base.html" %}
+
+{% block title %}Расписание на {{ selected_date.strftime('%d.%m.%Y') }}{% endblock %}
+
+{% block content %}
+    <h2>Расписание на {{ selected_date.strftime('%d %B %Y') }}</h2>
+    
+    <div class="date-nav">
+        <a href="/admin/schedule?selected_date_str={{ prev_date.isoformat() }}" class="nav-button">◀ Пред.</a>
+        <a href="/admin/schedule" class="nav-button">Сегодня</a>
+        <a href="/admin/schedule?selected_date_str={{ next_date.isoformat() }}" class="nav-button">След. ▶</a>
+        <input type="date" id="date-picker" value="{{ selected_date.isoformat() }}">
+        <button id="add-appointment-btn" class="nav-button" style="margin-left: auto; background-color: #28a745;">➕ Создать запись</button>
+    </div>
+
+    <style>
+        .schedule-table { width: 100%; border-collapse: collapse; margin-top: 20px; table-layout: fixed; }
+        .schedule-table th, .schedule-table td { border: 1px solid #ccc; padding: 8px; text-align: left; vertical-align: top; }
+        .schedule-table th { background-color: #e9e9e9; }
+        .appointment-card { background-color: #d1ecf1; border-left: 5px solid #0c5460; padding: 5px; margin-bottom: 5px; border-radius: 4px; font-size: 0.9em; word-wrap: break-word; }
+        .appointment-card .client-name { font-weight: bold; }
+        .date-nav { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .nav-button { background-color: #007bff; color: white; padding: 8px 12px; text-decoration: none; border-radius: 4px; border: none; cursor: pointer; font-size: 1em; }
+        .nav-button:hover { background-color: #0056b3; }
+        #date-picker { padding: 6px; border: 1px solid #ccc; border-radius: 4px; }
+        .modal { display: none; position: fixed; z-index: 1; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); }
+        .modal-content { background-color: #fefefe; margin: 10% auto; padding: 20px; border: 1px solid #888; width: 80%; max-width: 500px; border-radius: 5px; }
+        .close-btn { color: #aaa; float: right; font-size: 28px; font-weight: bold; }
+        .close-btn:hover, .close-btn:focus { color: black; text-decoration: none; cursor: pointer; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; }
+        .form-group input, .form-group select { width: 100%; padding: 8px; box-sizing: border-box; }
+    </style>
+
+    <div style="overflow-x:auto;">
+        <table class="schedule-table">
+            <thead>
+                <tr>
+                    <th style="width: 80px;">Время</th>
+                    {% for master in masters %}
+                        <th>{{ master.name }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for hour in range(9, 21) %}
+                    <tr>
+                        <td>{{ "%02d:00" % hour }}</td>
+                        {% for master in masters %}
+                            <td>
+                                {% for appt in appointments %}
+                                    {% if appt.master_id == master.id and appt.start_time.hour == hour %}
+                                        <div class="appointment-card">
+                                            <div class="client-name">{{ appt.client.name or 'Клиент' }}</div>
+                                            <div>{{ appt.service.name }}</div>
+                                            <div>{{ appt.start_time.strftime('%H:%M') }} - {{ appt.end_time.strftime('%H:%M') }}</div>
+                                        </div>
+                                    {% endif %}
+                                {% endfor %}
+                            </td>
+                        {% endfor %}
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div id="appointment-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn">&times;</span>
+            <h3>Новая запись</h3>
+            <form id="appointment-form">
+                <div class="form-group">
+                    <label for="client-name">Имя клиента (TG Nickname)</label>
+                    <input type="text" id="client-name" name="user_name" required>
+                </div>
+                <div class="form-group">
+                    <label for="client-tg-id">Telegram User ID</label>
+                    <input type="number" id="client-tg-id" name="telegram_user_id" required>
+                </div>
+                <div class="form-group">
+                    <label for="service-select">Услуга</label>
+                    <select id="service-select" name="service_id" required>
+                        <option value="">-- Выберите услугу --</option>
+                        {% for service in all_services %}
+                            <option value="{{ service.id }}">{{ service.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="master-select">Мастер</label>
+                    <select id="master-select" name="master_id" required>
+                        <option value="">-- Выберите мастера --</option>
+                        {% for master in all_masters %}
+                            <option value="{{ master.id }}">{{ master.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="time-input">Время (ЧЧ:ММ)</label>
+                    <input type="time" id="time-input" name="start_time" required>
+                </div>
+                <button type="submit" class="nav-button">Сохранить</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('date-picker').addEventListener('change', function() {
+            if (this.value) { window.location.href = '/admin/schedule?selected_date_str=' + this.value; }
+        });
+
+        const modal = document.getElementById('appointment-modal');
+        const btn = document.getElementById('add-appointment-btn');
+        const span = document.getElementsByClassName('close-btn')[0];
+
+        btn.onclick = function() { modal.style.display = 'block'; }
+        span.onclick = function() { modal.style.display = 'none'; }
+        window.onclick = function(event) {
+            if (event.target == modal) { modal.style.display = 'none'; }
+        }
+        
+        document.getElementById('appointment-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            const data = {
+                telegram_user_id: parseInt(formData.get('telegram_user_id')),
+                user_name: formData.get('user_name'),
+                service_id: parseInt(formData.get('service_id')),
+                master_id: parseInt(formData.get('master_id')),
+                start_time: `{{ selected_date.isoformat() }}T${formData.get('start_time')}:00`
+            };
+            
+            fetch('/api/v1/appointments', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+            .then(response => {
+                if (!response.ok) { return response.json().then(err => { throw new Error(err.detail || 'Unknown error') }); }
+                return response.json();
+            })
+            .then(result => {
+                alert('Запись успешно создана!');
+                window.location.reload();
+            })
+            .catch(error => {
+                alert('Ошибка при создании записи: ' + error.message);
+            });
+        });
+    </script>
+{% endblock %}
+
+
+--- START OF FILE .env (EXAMPLE) ---
+# --- Telegram Бот ---
+BOT_TOKEN="YOUR_TELEGRAM_BOT_TOKEN"
+API_URL="http://api:8000"
+
+# --- Gemini API ---
+GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
+
+# --- База Данных (для Docker) ---
+DB_USER="your_db_user"
+DB_PASSWORD="your_db_password"
+DB_NAME="your_db_name"
+DB_HOST="db"
+
+# --- Админка ---
+ADMIN_USERNAME="admin"
+ADMIN_PASSWORD="your_secure_admin_password"
+
+# --- Переменная для определения окружения ---
+RUNNING_IN_DOCKER=1
+
+
+==================================================
+                  DUMP COMPLETE
+==================================================

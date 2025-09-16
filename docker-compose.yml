@@ -1,18 +1,15 @@
+# docker-compose.yml
 services:
   db:
     image: postgres:14-alpine
     container_name: salon_postgres_db
     volumes:
       - postgres_data:/var/lib/postgresql/data/
-    environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
-    ports:
-      - "5432:5432"
+    env_file:
+      - .env # <-- Postgres тоже будет брать данные из .env
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -39,13 +36,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    env_file:
+      - .env # <-- API будет брать данные из .env
     environment:
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_NAME=${DB_NAME}
-      - ADMIN_USERNAME=${ADMIN_USERNAME}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
-      - RUNNING_IN_DOCKER=1
+      - RUNNING_IN_DOCKER=1 # <-- Оставляем только эту переменную
     restart: unless-stopped
     networks:
       - salon_network
@@ -59,9 +53,10 @@ services:
     depends_on:
       - api
       - redis
+    env_file:
+      - .env # <-- Бот будет брать ВСЕ данные из .env
+    # --- ЯВНО УКАЗЫВАЕМ ТОЛЬКО ВНУТРЕННИЕ АДРЕСА ---
     environment:
-      - BOT_TOKEN=${BOT_TOKEN}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
       - API_URL=http://api:8000
       - REDIS_HOST=redis
       - REDIS_PORT=6379

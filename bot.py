@@ -4,24 +4,29 @@ import logging
 import locale
 
 from aiogram import Bot, Dispatcher, types
-# --- НОВЫЕ ИМПОРТЫ ---
 from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio.client import Redis
 
-# --- ИЗМЕНЯЕМ ИМПОРТ CONFIG ---
-from config import BOT_TOKEN, REDIS_HOST, REDIS_PORT
+from config import BOT_TOKEN, REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, DEBUG
 from handlers import common, appointments, booking
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+# Настройка логирования
+logging.basicConfig(
+    level=logging.DEBUG if DEBUG else logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+)
 
 async def main():
     bot = Bot(token=BOT_TOKEN)
     
-    # --- НАСТРОЙКА REDIS STORAGE ---
-    redis_client = Redis(host=REDIS_HOST, port=REDIS_PORT)
+    # Настройка Redis Storage
+    redis_client = Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        password=REDIS_PASSWORD if REDIS_PASSWORD else None
+    )
     storage = RedisStorage(redis=redis_client)
     
-    # --- ПЕРЕДАЕМ STORAGE В ДИСПЕТЧЕР ---
     dp = Dispatcher(storage=storage)
 
     dp.include_router(booking.router)
@@ -42,6 +47,9 @@ if __name__ == "__main__":
     try:
         locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')
     except locale.Error:
-        logging.warning("Локаль ru_RU.UTF-8 не найдена, месяцы могут отображаться на английском.")
+        try:
+            locale.setlocale(locale.LC_TIME, 'Russian_Russia.1251')  # Fallback для Windows/Docker
+        except locale.Error:
+            logging.warning("Локаль ru_RU не найдена, месяцы могут отображаться на английском.")
     
     asyncio.run(main())

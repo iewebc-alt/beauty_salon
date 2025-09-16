@@ -6,6 +6,7 @@ from datetime import date, datetime, time, timedelta
 import calendar
 import logging
 
+# Абсолютные импорты от корня проекта
 import models
 from api import schemas
 from api.dependencies import get_db
@@ -133,9 +134,9 @@ def get_salon_information(db: Session = Depends(get_db)):
     
     return {"services": services, "masters": masters_processed}
 
-@router.post("/appointments/natural")
+@router.post("/appointments/natural", response_model=schemas.AppointmentInfoSchema)
 def create_appointment_from_natural_language(request: schemas.AppointmentNaturalLanguageSchema, db: Session = Depends(get_db)):
-    logging.info(f"Received natural language appointment request: {request.dict()}")
+    logging.info(f"Received natural language appointment request: {request.model_dump()}")
     client = db.query(models.Client).filter(models.Client.telegram_user_id == request.telegram_user_id).first()
     if not client:
         client = models.Client(telegram_user_id=request.telegram_user_id, name=request.user_name)
@@ -167,9 +168,9 @@ def create_appointment_from_natural_language(request: schemas.AppointmentNatural
         "master_name": master.name
     }
 
-@router.post("/appointments")
+@router.post("/appointments", response_model=schemas.AppointmentInfoSchema)
 def create_appointment(appointment: schemas.AppointmentCreateSchema, db: Session = Depends(get_db)):
-    logging.info(f"Received appointment request: {appointment.dict()}")
+    logging.info(f"Received appointment request: {appointment.model_dump()}")
     client = db.query(models.Client).filter(models.Client.telegram_user_id == appointment.telegram_user_id).first()
     if not client:
         client = models.Client(telegram_user_id=appointment.telegram_user_id, name=appointment.user_name)

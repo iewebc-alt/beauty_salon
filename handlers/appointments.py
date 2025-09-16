@@ -7,6 +7,7 @@ from datetime import datetime
 import httpx
 import uuid
 import logging
+from babel.dates import format_datetime
 
 from services.api_client import api_client
 
@@ -22,15 +23,15 @@ async def show_my_appointments(message: types.Message, state: FSMContext):
         
         await message.answer("Нашла Ваши предстоящие визиты в «Элеганс»:")
         cancellation_data = {}
-        for appt in appointments:
+        for idx, appt in enumerate(appointments, 1):
             dt_object = datetime.fromisoformat(appt['start_time'])
-            formatted_datetime = dt_object.strftime('%d %B %Y в %H:%M')
-            response_text = (f"🗓️ *{formatted_datetime}*\n" f"Услуга: {appt['service_name']}\n" f"Мастер: {appt['master_name']}")
+            formatted_datetime = format_datetime(dt_object, 'd MMMM yyyy в HH:mm', locale='ru_RU')
+            response_text = (f"🗓️ *{idx}. {formatted_datetime}*\n" f"Услуга: {appt['service_name']}\n" f"Мастер: {appt['master_name']}")
             short_id = str(uuid.uuid4())[:8]
             cancellation_data[short_id] = {"appointment_id": appt['id'], "service_name": appt['service_name'], "master_name": appt['master_name'], "datetime": formatted_datetime}
             builder = InlineKeyboardBuilder().button(text="❌ Отменить запись", callback_data=f"cancel_appt:{short_id}")
             await message.answer(response_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-        await state.update_data(cancellation_data=cancellation_data)
+        await state.update_data(cancellation_data=cancellation_data, cancellation_cache=appointments)
     except (httpx.RequestError, httpx.HTTPStatusError):
         await message.answer("Ой, произошла небольшая техническая заминка, и я не могу сейчас посмотреть Ваши записи. Попробуйте, пожалуйста, чуть позже! 🙏")
 

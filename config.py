@@ -1,7 +1,11 @@
 import os
+from datetime import timezone
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# --- UTC ---
+UTC = timezone.utc
 
 # --- База Данных ---
 DB_USER = os.getenv("DB_USER")
@@ -19,15 +23,21 @@ DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAM
 
 # --- Telegram Бот ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-API_URL = os.getenv("API_URL", "http://api:8000")
+API_URL = os.getenv("API_URL")  # Исправлено: добавлена закрывающая скобка
 
-# --- Gemini API ---
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# --- Redis ---
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 
 # --- Админка ---
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 
-# --- Redis ---
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+# --- Gemini ---
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# --- Окружение ---
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+RUNNING_IN_DOCKER = os.getenv("RUNNING_IN_DOCKER", "0") == "1"

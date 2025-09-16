@@ -6,18 +6,36 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session, joinedload
 from typing import Optional
 from datetime import date, datetime, time, timedelta
+from contextlib import asynccontextmanager
 
-# Важно: используем относительные импорты, так как находимся внутри пакета 'api'
 import models
-from database import SessionLocal, engine
-from .routers import bot #, admin # admin роутер пока не создан, но можно будет добавить
-from .dependencies import authenticate_user, get_db
+from database import SessionLocal, Base, get_engine
+from api.routers import bot
+from api.dependencies import authenticate_user, get_db
+from config import ADMIN_USERNAME, ADMIN_PASSWORD, ENVIRONMENT, DEBUG
 
-# Создаем таблицы в БД
-models.Base.metadata.create_all(bind=engine)
+# Настройка логирования
+logging.basicConfig(
+    level=logging.DEBUG if DEBUG else logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+)
 
-# --- Создание начальных данных ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logging.info("Application startup...")
+    engine = get_engine()
+    SessionLocal.configure(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    
+    with SessionLocal() as db:
+        create_initial_data(db)
+    yield
+    logging.info("Application shutdown...")
+
+app = FastAPI(title="Beauty Salon API", lifespan=lifespan)
+
 def create_initial_data(db: Session):
+    """Заполняет базу данных начальными данными, если она пуста."""
     if db.query(models.Service).count() == 0:
         logging.info("Creating initial services data...")
         db.add_all([
@@ -46,7 +64,6 @@ def create_initial_data(db: Session):
         
         db.add_all([m1, m2, m3, m4]); db.commit()
         
-        logging.info("Configuring services for testing 'any master'...")
         m1.services.extend([s_manicure, s_eyebrow])
         m2.services.append(s_haircut)
         m3.services.extend([s_facial, s_depilation, s_eyebrow])
@@ -69,17 +86,8 @@ def create_initial_data(db: Session):
         db.add_all(schedules); db.commit()
         logging.info("Initial data created for testing.")
 
-with SessionLocal() as db:
-    create_initial_data(db)
-
-app = FastAPI(title="Beauty Salon API")
-
-# Подключаем роутеры
 app.include_router(bot.router)
-# app.include_router(admin.router) # Раскомментируйте, когда создадите admin.py
 
-# Подключаем статику и шаблоны
-# Убедитесь, что папки 'static' и 'templates' находятся в корне проекта
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -87,7 +95,6 @@ templates = Jinja2Templates(directory="templates")
 def read_root():
     return {"message": "Beauty Salon API is running"}
 
-# Пример того, как будет выглядеть эндпоинт для админки, когда вы его перенесете
 @app.get("/admin/schedule", include_in_schema=False)
 def admin_schedule_page(
     request: Request, 

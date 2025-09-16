@@ -16,7 +16,8 @@ def get_db():
         db.close()
 
 # --- Безопасность ---
-security = HTTPBasic()
+security = HTTPBasic() # <--- ИСПРАВЛЕНИЕ ЗДЕСЬ: Добавляем эту строку
+
 def authenticate_user(credentials: HTTPBasicCredentials = Depends(security)):
     is_username_correct = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
     is_password_correct = secrets.compare_digest(credentials.password, ADMIN_PASSWORD)

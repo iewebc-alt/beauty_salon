@@ -1,0 +1,10 @@
+[0;1;32m●[0m gunicorn-api.service - Gunicorn instance to serve Beauty Salon API
+     Loaded: loaded (/etc/systemd/system/gunicorn-api.service; enabled; vendor preset: enabled)
+     Active: [0;1;32mactive (running)[0m since Thu 2025-09-04 17:20:12 CEST; 545ms ago
+   Main PID: 20294 (uvicorn)
+      Tasks: 1 (limit: 4588)
+     Memory: 21.7M
+     CGroup: /system.slice/gunicorn-api.service
+             └─20294 /var/www/beauty_salon/venv/bin/python3 /var/www/beauty_salon/venv/bin/uvicorn api:app --host 0.0.0.0 --port 8000
+
+Sep 04 17:20:12 grievingwash.aeza.network systemd[1]: Started Gunicorn instance to serve Beauty Salon API.

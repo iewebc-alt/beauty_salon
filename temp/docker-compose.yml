@@ -1,0 +1,73 @@
+# docker-compose.yml
+services:
+  db:
+    image: postgres:14-alpine
+    container_name: salon_postgres_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    env_file:
+      - .env # <-- Postgres тоже будет брать данные из .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - salon_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: salon_redis
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - salon_network
+
+  api:
+    build: .
+    container_name: salon_api_service
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env # <-- API будет брать данные из .env
+    environment:
+      - RUNNING_IN_DOCKER=1 # <-- Оставляем только эту переменную
+    restart: unless-stopped
+    networks:
+      - salon_network
+
+  bot:
+    build: .
+    container_name: salon_telegram_bot
+    command: python3 bot.py
+    volumes:
+      - .:/app
+    depends_on:
+      - api
+      - redis
+    env_file:
+      - .env # <-- Бот будет брать ВСЕ данные из .env
+    # --- ЯВНО УКАЗЫВАЕМ ТОЛЬКО ВНУТРЕННИЕ АДРЕСА ---
+    environment:
+      - API_URL=http://api:8000
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    restart: unless-stopped
+    networks:
+      - salon_network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  salon_network:
+    driver: bridge

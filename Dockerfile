@@ -1,28 +1,29 @@
-# 1. Используем официальный легковесный образ Python 3.9
-#FROM python:3.9-slim
-FROM python:3.11-slim
+FROM python:3.10-slim
 
-# 2. Устанавливаем рабочую директорию внутри будущего контейнера
 WORKDIR /app
 
-# 3. Копируем ТОЛЬКО файл с зависимостями
-COPY requirements.txt .
-
-# 4. Устанавливаем системные зависимости, необходимые для некоторых Python-библиотек
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Обновляем системные пакеты
+RUN apt-get update && apt-get install -y \
     build-essential \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 5. Устанавливаем Python-зависимости, используя requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip
 
-# 6. Копируем весь остальной код нашего проекта
+# Устанавливаем библиотеки (добавили Babel в конец списка)
+RUN pip install --no-cache-dir \
+    aiogram==3.10.0 \
+    fastapi==0.111.0 \
+    uvicorn==0.30.1 \
+    sqlalchemy==2.0.30 \
+    psycopg2-binary==2.9.9 \
+    httpx==0.27.0 \
+    python-dotenv==1.0.1 \
+    redis==5.0.1 \
+    Babel
+
 COPY . .
 
-# 7. Указываем Docker, что наше приложение будет слушать порт 8000
 EXPOSE 8000
 
-# 8. Команда по умолчанию, которая будет запускаться при старте контейнера
-# Запускаем uvicorn, чтобы он был доступен извне контейнера (0.0.0.0)
 CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]

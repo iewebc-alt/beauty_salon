@@ -1,23 +1,9 @@
-# models.py
-from sqlalchemy import (
-    Column,
-    Integer,
-    String,
-    Text,
-    ForeignKey,
-    Table,
-    BigInteger,
-    Time,
-    Date,
-    DateTime
-)
+from sqlalchemy import (Column, Integer, String, Text, ForeignKey, Table,
+                      BigInteger, Time, Date, DateTime)
 from sqlalchemy.orm import relationship
 from database import Base
 
-# Ассоциация мастеров и услуг
-master_services = Table(
-    'master_services',
-    Base.metadata,
+master_services = Table('master_services', Base.metadata,
     Column('master_id', Integer, ForeignKey('masters.id'), primary_key=True),
     Column('service_id', Integer, ForeignKey('services.id'), primary_key=True)
 )
@@ -53,7 +39,7 @@ class Schedule(Base):
     __tablename__ = "schedules"
     id = Column(Integer, primary_key=True)
     master_id = Column(Integer, ForeignKey('masters.id'))
-    day_of_week = Column(Integer, nullable=False)  # 1=Пн, 7=Вс
+    day_of_week = Column(Integer, nullable=False) 
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
     master = relationship("Master", back_populates="schedules")

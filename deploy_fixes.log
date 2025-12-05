@@ -1,0 +1,33 @@
+Starting deployment at Вс 21 сен 2025 01:50:59 CEST
+Starting deployment in directory: /var/www/beauty_salon
+Creating backup in: /var/www/beauty_salon/backup_20250921_015059
+Backup: config.py
+Backup: bot.py
+Backup: docker-compose.yml
+Backup: requirements.txt
+Backup: api/main.py
+Backup: api/routers/bot.py
+Backup: handlers/common.py
+Backup: handlers/appointments.py
+Backup: handlers/booking.py
+Backup: tests/test_api.py
+Backup: services/gemini.py
+Backup completed. Restore with: cp -r /var/www/beauty_salon/backup_20250921_015059/* .
+.env found, using existing.
+Replacing files with fixes...
+dos2unix: преобразование файла config.py в формат Unix…
+Created config.py
+dos2unix: преобразование файла bot.py в формат Unix…
+Created bot.py
+dos2unix: преобразование файла docker-compose.yml в формат Unix…
+Created docker-compose.yml
+dos2unix: преобразование файла requirements.txt в формат Unix…
+Created requirements.txt
+dos2unix: преобразование файла api/main.py в формат Unix…
+Created api/main.py
+dos2unix: преобразование файла api/routers/bot.py в формат Unix…
+Created api/routers/bot.py
+dos2unix: преобразование файла handlers/common.py в формат Unix…
+Created handlers/common.py
+dos2unix: преобразование файла handlers/appointments.py в формат Unix…
+Created handlers/appointments.py

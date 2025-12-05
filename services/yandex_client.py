@@ -8,7 +8,7 @@ from config import YANDEX_API_KEY, YANDEX_FOLDER_ID
 # URL для запросов к YandexGPT
 YANDEX_GPT_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
 
-# Описание инструмента (сразу в виде JSON)
+# Описание инструмента (JSON)
 CREATE_APPOINTMENT_TOOL = {
     "function": {
         "name": "create_appointment",
@@ -46,7 +46,6 @@ class YandexGptClient:
             logging.warning("Ключи для YandexGPT не найдены!")
 
     def _prepare_history(self, history_raw: list, user_name: str) -> list:
-        # Формируем системный промпт
         messages = [
             {
                 "role": "system",
@@ -59,12 +58,12 @@ class YandexGptClient:
                 )
             }
         ]
-        # Добавляем историю
         for msg in history_raw:
-            # Конвертируем наш внутренний формат в формат API Яндекса
             role = "assistant" if msg['role'] == 'model' else "user"
-            text = msg['parts'][0]['text']
-            messages.append({"role": role, "text": text})
+            # Защита от пустых сообщений в истории
+            text_content = msg['parts'][0].get('text', '')
+            if text_content:
+                messages.append({"role": role, "text": text_content})
         return messages
 
     async def generate_response_or_tool_call(self, state: FSMContext, user_message: str, user_name: str) -> dict:
@@ -77,12 +76,11 @@ class YandexGptClient:
         messages = self._prepare_history(history_raw, user_name)
         messages.append({"role": "user", "text": user_message})
 
-        # Тело запроса
         payload = {
             "modelUri": f"gpt://{self.folder_id}/yandexgpt/latest",
             "completionOptions": {
                 "stream": False,
-                "temperature": 0.2,
+                "temperature": 0.1, # Снизили температуру для большей точности
                 "maxTokens": "1000"
             },
             "messages": messages,
@@ -97,40 +95,53 @@ class YandexGptClient:
 
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.post(YANDEX_GPT_URL, json=payload, headers=headers, timeout=10.0)
+                response = await client.post(YANDEX_GPT_URL, json=payload, headers=headers, timeout=20.0)
                 
                 if response.status_code != 200:
                     logging.error(f"YandexGPT Error {response.status_code}: {response.text}")
-                    return {"type": "text", "content": "Простите, сервис временно недоступен."}
+                    return {"type": "text", "content": f"Простите, сервис временно недоступен (Код {response.status_code})."}
 
                 result = response.json()
                 
-                # Парсим ответ
-                # В REST API структура ответа немного отличается от SDK
+                # Логируем полный ответ для отладки
+                logging.info(f"YandexGPT Raw Response: {json.dumps(result, ensure_ascii=False)}")
+
                 alternatives = result.get("result", {}).get("alternatives", [])
                 if not alternatives:
-                    return {"type": "text", "content": "Не удалось получить ответ."}
+                    return {"type": "text", "content": "Не удалось получить ответ от нейросети."}
                 
                 message = alternatives[0].get("message", {})
                 
-                # Обновляем историю (добавляем вопрос пользователя)
+                # Сохраняем вопрос пользователя в историю
                 history_raw.append({'role': 'user', 'parts': [{'text': user_message}]})
 
-                # Проверяем наличие вызова инструмента
-                if "toolCalls" in message:
-                    tool_call = message["toolCalls"][0]
+                # --- ИСПРАВЛЕННАЯ ЛОГИКА ПОИСКА ИНСТРУМЕНТОВ ---
+                # Проверяем и toolCalls (стандарт), и toolCallList (специфика Яндекса)
+                tool_calls = message.get("toolCalls") or message.get("toolCallList", {}).get("toolCalls")
+                
+                if tool_calls:
+                    tool_call = tool_calls[0]
                     tool_name = tool_call["functionCall"]["name"]
-                    args = tool_call["functionCall"]["arguments"] # Это словарь
+                    args = tool_call["functionCall"]["arguments"] # В REST API это уже словарь
                     
                     logging.info(f"YandexGPT запросил инструмент: {tool_name} с аргументами: {args}")
+                    
+                    # Очищаем историю после успешного вызова, чтобы начать новый контекст
                     await state.update_data(chat_history=[])
+                    
                     return {"type": "tool_call", "name": tool_name, "args": args}
-                else:
-                    # Обычный текстовый ответ
-                    bot_text = message.get("text", "")
-                    history_raw.append({'role': 'model', 'parts': [{'text': bot_text}]})
-                    await state.update_data(chat_history=history_raw)
-                    return {"type": "text", "content": bot_text}
+                
+                # Если инструментов нет, берем текст
+                bot_text = message.get("text", "")
+                
+                # Защита от пустого ответа
+                if not bot_text:
+                    logging.warning("YandexGPT вернул пустой текст и нет вызова инструмента!")
+                    return {"type": "text", "content": "Я вас услышал, но мне нужно уточнить детали. Повторите, пожалуйста."}
+
+                history_raw.append({'role': 'model', 'parts': [{'text': bot_text}]})
+                await state.update_data(chat_history=history_raw)
+                return {"type": "text", "content": bot_text}
 
         except Exception as e:
             logging.error(f"Ошибка при HTTP запросе к YandexGPT: {e}")

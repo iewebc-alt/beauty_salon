@@ -12,7 +12,9 @@ if os.getenv("RUNNING_IN_DOCKER"):
 else:
     DB_HOST = "localhost"
 
-DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}"
+DB_PORT = os.getenv("DB_PORT", "5432")
+
+DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_URL = os.getenv("API_URL", "http://api:8000")

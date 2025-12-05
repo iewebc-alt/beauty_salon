@@ -99,7 +99,7 @@ async def master_selected_show_calendar(
     today = date.today()
     user_data = await state.get_data()
     try:
-        # ИСПРАВЛЕНО: Используем today.year и today.month вместо year/month
+        # Используем today.year и today.month
         active_days = await api_client.get_active_days(
             user_data["service_id"], today.year, today.month, user_data.get("master_id")
         )
@@ -131,7 +131,7 @@ async def process_date_selected(callback: types.CallbackQuery, state: FSMContext
     await state.update_data(selected_date=selected_date.isoformat())
     user_data = await state.get_data()
     try:
-        # ИСПРАВЛЕНО: Убран telegram_user_id
+        # Убран telegram_user_id
         slots = await api_client.get_available_slots(
             service_id=user_data["service_id"],
             selected_date=selected_date.isoformat(),
@@ -229,7 +229,7 @@ async def process_calendar_nav(callback: types.CallbackQuery, state: FSMContext)
     year, month = int(year_str), int(month_str)
     user_data = await state.get_data()
     try:
-        # ИСПРАВЛЕНО: Убран telegram_user_id
+        # Убран telegram_user_id
         active_days = await api_client.get_active_days(
             service_id=user_data["service_id"],
             year=year,
@@ -317,7 +317,7 @@ async def back_to_date_handler(callback: types.CallbackQuery, state: FSMContext)
     user_data = await state.get_data()
     selected_date_obj = date.fromisoformat(user_data["selected_date"])
     try:
-        # ИСПРАВЛЕНО: Убран telegram_user_id
+        # Убран telegram_user_id
         active_days = await api_client.get_active_days(
             service_id=user_data["service_id"],
             year=selected_date_obj.year,
@@ -346,7 +346,7 @@ async def back_to_time_handler(callback: types.CallbackQuery, state: FSMContext)
     await state.set_state(AppointmentStates.choosing_time)
     user_data = await state.get_data()
     try:
-        # ИСПРАВЛЕНО: Убран telegram_user_id
+        # Убран telegram_user_id
         slots = await api_client.get_available_slots(
             service_id=user_data["service_id"],
             selected_date=user_data["selected_date"],
@@ -387,7 +387,7 @@ async def confirm_booking_handler(callback: types.CallbackQuery, state: FSMConte
     naive_dt = datetime.fromisoformat(
         f"{user_data['selected_date']}T{user_data['selected_time']}:00"
     )
-    utc_dt = naive_dt.astimezone(timezone.utc)
+    utc_dt = naive_dt.replace(tzinfo=timezone.utc)
     start_time_str = utc_dt.isoformat()
 
     payload = {
@@ -404,17 +404,19 @@ async def confirm_booking_handler(callback: types.CallbackQuery, state: FSMConte
         formatted_date = response_dt_naive.strftime("%d %B %Y")
         formatted_time = response_dt_naive.strftime("%H:%M")
 
+        # Сообщение об успехе
         await callback.message.edit_text(
             f"🎉 Ура! Я вас записала! \n\n"
             f"Будем с нетерпением ждать вас в салоне «Элеганс» {formatted_date} в {formatted_time} "
             f"на процедуру «{api_response['service_name']}» к мастеру {api_response['master_name']}. 💖"
         )
 
+        # ИЗМЕНЕННАЯ ЧАСТЬ: ЗАПРОС КОНТАКТА В ФОРМЕ "ДЕТАЛИ ЗАКАЗА"
         keyboard = types.ReplyKeyboardMarkup(
             keyboard=[
                 [
                     types.KeyboardButton(
-                        text="📱 Поделиться контактом", request_contact=True
+                        text="📱 Оставить контакт для связи", request_contact=True
                     )
                 ]
             ],
@@ -422,11 +424,13 @@ async def confirm_booking_handler(callback: types.CallbackQuery, state: FSMConte
             one_time_keyboard=True,
         )
 
+        # Нейтральный, вежливый текст
         await callback.message.answer(
-            "Чтобы мы могли оперативно с вами связаться в случае изменений, поделитесь, пожалуйста, вашим контактным номером телефона. Это очень удобно! 😊",
+            "Если необходимо уточнить детали или подтвердить запись голосом, Вы можете оставить контактный номер для администратора, нажав кнопку ниже. 👇",
             reply_markup=keyboard,
         )
-        await state.set_state(AppointmentStates.awaiting_contact)
+        # Очищаем состояние, но можно добавить ожидание контакта, если нужна логика
+        await state.clear()
 
     except httpx.HTTPStatusError as e:
         error_detail = "Неизвестная ошибка API."

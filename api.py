@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo # <--- ВАЖНО: Для работы с московским временем
 
 import models
 from database import SessionLocal, engine
@@ -114,7 +115,12 @@ class AvailableSlotSchema(BaseModel):
     time: str; master_id: int
 
 class AppointmentNaturalLanguageSchema(BaseModel):
-    telegram_user_id: int; user_name: str; service_name: str; appointment_date: str; appointment_time: str; master_name: Optional[str] = None
+    telegram_user_id: int
+    user_name: str
+    service_name: str
+    appointment_date: str
+    appointment_time: str
+    master_name: Optional[str] = None
 
 # --- Dependency БД ---
 def get_db():
@@ -122,7 +128,7 @@ def get_db():
     try: yield db
     finally: db.close()
 
-# --- Инициализация данных ---
+# --- Создание начальных данных ---
 def create_initial_data(db: Session):
     if db.query(models.Service).count() == 0:
         s1=models.Service(name="Маникюр с покрытием", price=2000, duration_minutes=90)
@@ -133,12 +139,15 @@ def create_initial_data(db: Session):
     if db.query(models.Master).count() == 0:
         s_manicure=db.query(models.Service).filter_by(name="Маникюр с покрытием").one()
         s_haircut=db.query(models.Service).filter_by(name="Женская стрижка").one()
+        
         m1=models.Master(name="Анна Смирнова", specialization="Мастер маникюра", description="Опыт 5 лет.")
         m2=models.Master(name="Елена Волкова", specialization="Парикмахер-стилист", description="Сложные окрашивания.")
         db.add_all([m1, m2]); db.commit()
+        
         m1.services.append(s_manicure)
         m2.services.append(s_haircut)
         db.commit()
+        
         # График по умолчанию
         schedules=[]
         for d in [1,2,3,4,5]:
@@ -163,7 +172,6 @@ def admin_schedule_page(request: Request, selected_date_str: Optional[str]=None,
     next_date = selected_date + timedelta(days=1)
     
     masters = db.query(models.Master).order_by(models.Master.name).all()
-    # Загружаем списки для создания записи
     services = db.query(models.Service).all()
     clients = db.query(models.Client).order_by(models.Client.name).all()
     
@@ -235,7 +243,8 @@ def admin_clients_page(request: Request, db: Session=Depends(get_db), username: 
 @app.get("/")
 def read_root(): return {"message": "Beauty Salon API is running"}
 
-# --- SERVICES ---
+# --- Services ---
+
 @app.get("/api/v1/services", response_model=List[ServiceSchema])
 def get_services(db: Session = Depends(get_db)):
     return db.query(models.Service).join(models.Service.masters).distinct().all()
@@ -250,23 +259,30 @@ def create_service(service: ServiceSchema, db: Session = Depends(get_db), userna
 def update_service(service_id: int, service_data: ServiceUpdateSchema, db: Session = Depends(get_db), username: str=Depends(authenticate_user)):
     service = db.query(models.Service).get(service_id)
     if not service: raise HTTPException(status_code=404, detail="Service not found")
+    
     service.name = service_data.name
     service.price = service_data.price
     service.duration_minutes = service_data.duration_minutes
     db.commit()
     return service
 
-# --- MASTERS ---
+# --- Masters ---
+
 @app.get("/api/v1/masters", response_model=List[MasterSchema])
 def get_masters(db: Session = Depends(get_db)):
     return db.query(models.Master).all()
 
 @app.post("/api/v1/masters")
 def create_master(master_data: MasterCreateSchema, db: Session = Depends(get_db), username: str=Depends(authenticate_user)):
-    new_master = models.Master(name=master_data.name, specialization=master_data.specialization, description=master_data.description)
+    new_master = models.Master(
+        name=master_data.name, 
+        specialization=master_data.specialization, 
+        description=master_data.description
+    )
     if master_data.service_ids:
         services = db.query(models.Service).filter(models.Service.id.in_(master_data.service_ids)).all()
         new_master.services = services
+
     db.add(new_master); db.commit(); db.refresh(new_master)
     return new_master
 
@@ -274,12 +290,15 @@ def create_master(master_data: MasterCreateSchema, db: Session = Depends(get_db)
 def update_master(master_id: int, master_data: MasterUpdateSchema, db: Session = Depends(get_db), username: str=Depends(authenticate_user)):
     master = db.query(models.Master).get(master_id)
     if not master: raise HTTPException(status_code=404, detail="Master not found")
+    
     master.name = master_data.name
     master.specialization = master_data.specialization
     master.description = master_data.description
+    
     if master_data.service_ids is not None:
         services = db.query(models.Service).filter(models.Service.id.in_(master_data.service_ids)).all()
         master.services = services
+        
     db.commit()
     return master
 
@@ -289,7 +308,8 @@ def get_masters_for_service(service_id: int, db: Session = Depends(get_db)):
     if not service: raise HTTPException(status_code=404, detail="Service not found")
     return service.masters
 
-# --- SCHEDULE ---
+# --- Schedule ---
+
 @app.get("/api/v1/masters/{master_id}/schedule")
 def get_master_schedule(master_id: int, db: Session = Depends(get_db)):
     schedules = db.query(models.Schedule).filter(models.Schedule.master_id == master_id).all()
@@ -318,7 +338,8 @@ def update_master_schedule(master_id: int, data: MasterScheduleUpdate, db: Sessi
     db.commit()
     return {"message": "Schedule updated"}
 
-# --- CLIENTS (Manual) ---
+# --- Clients (Manual) ---
+
 @app.post("/api/v1/clients_manual")
 def create_client_manual(data: ClientManualSchema, db: Session = Depends(get_db), username: str=Depends(authenticate_user)):
     tg_id = data.telegram_user_id
@@ -342,7 +363,9 @@ def update_client_manual(client_id: int, data: ClientManualSchema, db: Session =
     db.commit()
     return client
 
-# --- SLOTS & LOGIC ---
+
+# --- SLOTS & LOGIC (WITH TIMEZONE FIX) ---
+
 @app.get("/api/v1/available-slots", response_model=List[AvailableSlotSchema])
 def get_available_slots(service_id: int, selected_date: date, master_id: Optional[int]=None, db: Session=Depends(get_db)):
     service = db.query(models.Service).filter(models.Service.id == service_id).first()
@@ -355,6 +378,10 @@ def get_available_slots(service_id: int, selected_date: date, master_id: Optiona
     
     all_slots = []
     day_of_week = selected_date.isoweekday()
+    
+    # --- ВАЖНО: Московское время ---
+    moscow_tz = ZoneInfo("Europe/Moscow")
+    now_in_moscow = datetime.now(moscow_tz)
     
     for master in potential_masters:
         schedule = db.query(models.Schedule).filter(models.Schedule.master_id == master.id, models.Schedule.day_of_week == day_of_week).first()
@@ -372,6 +399,11 @@ def get_available_slots(service_id: int, selected_date: date, master_id: Optiona
         work_end = datetime.combine(selected_date, schedule.end_time)
         
         while slot_start + duration <= work_end:
+            # Проверка на прошедшее время (только для текущего дня)
+            if selected_date == now_in_moscow.date() and slot_start.time() <= now_in_moscow.time():
+                 slot_start += timedelta(minutes=30)
+                 continue
+            
             slot_end = slot_start + duration
             is_free = True
             for appt in appointments:
@@ -388,9 +420,15 @@ def get_active_days(service_id: int, year: int, month: int, master_id: Optional[
     try: num_days = calendar.monthrange(year, month)[1]
     except: return []
     active_days = []
+    
+    # --- ВАЖНО: Московское время ---
+    moscow_tz = ZoneInfo("Europe/Moscow")
+    today_moscow = datetime.now(moscow_tz).date()
+
     for day in range(1, num_days + 1):
         current_date = date(year, month, day)
-        if current_date < date.today(): continue
+        if current_date < today_moscow: continue
+        
         if get_available_slots(service_id, current_date, master_id, db):
             active_days.append(day)
     return active_days
@@ -425,6 +463,7 @@ def create_appointment(appointment: AppointmentCreateSchema, db: Session = Depen
 @app.post("/api/v1/appointments/natural")
 def create_appointment_from_natural_language(request: AppointmentNaturalLanguageSchema, db: Session = Depends(get_db)):
     logging.info(f"AI Request: {request.dict()}")
+    
     client = db.query(models.Client).filter(models.Client.telegram_user_id == request.telegram_user_id).first()
     if not client:
         client = models.Client(telegram_user_id=request.telegram_user_id, name=request.user_name)

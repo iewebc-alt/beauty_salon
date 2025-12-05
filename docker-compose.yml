@@ -30,6 +30,7 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@db/${DB_NAME}
+      - TZ=Europe/Moscow  # <--- ДОБАВИТЬ СЮДА
       - RUNNING_IN_DOCKER=true
     depends_on:
       - db
@@ -44,6 +45,7 @@ services:
       - .:/app
     environment:
       - BOT_TOKEN=${BOT_TOKEN}
+      - TZ=Europe/Moscow  # <--- ДОБАВИТЬ СЮДА
       - API_URL=http://api:8000
       - YANDEX_API_KEY=${YANDEX_API_KEY}
       - YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID}

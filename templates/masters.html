@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row">
+    <div class="col-md-5 mb-4">
+        <div class="card p-4 shadow-sm sticky-top" style="top: 20px; z-index: 1;">
+            <h5 class="mb-3" id="formTitle">➕ Добавить мастера</h5>
+            <form onsubmit="handleFormSubmit(event)">
+                <input type="hidden" id="masterId">
+                <div class="mb-3">
+                    <label class="form-label">Имя и Фамилия</label>
+                    <input type="text" id="name" name="name" class="form-control" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Должность</label>
+                    <input type="text" id="specialization" name="specialization" class="form-control" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Услуги</label>
+                    <div class="input-group">
+                        <select id="serviceSelect" class="form-select">
+                            <option value="" disabled selected>Выберите услугу...</option>
+                            {% for service in services %}
+                                <option value="{{ service.id }}">{{ service.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="button" class="btn btn-outline-primary" onclick="addServiceTag()"><i class="fas fa-plus"></i></button>
+                    </div>
+                    <div id="selectedServicesContainer" class="mt-2 d-flex flex-wrap gap-2"></div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Описание</label>
+                    <textarea id="description" name="description" class="form-control" rows="3"></textarea>
+                </div>
+                <div class="d-flex gap-2">
+                    <button type="submit" id="submitBtn" class="btn btn-success flex-grow-1">Сохранить</button>
+                    <button type="button" id="cancelBtn" class="btn btn-secondary" style="display:none;" onclick="resetForm()">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <div class="col-md-8">
+        <div class="row">
+            {% for master in masters %}
+            <div class="col-md-6 mb-3">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h5 class="card-title fw-bold text-primary mb-1">{{ master.name }}</h5>
+                                <h6 class="card-subtitle text-muted">{{ master.specialization }}</h6>
+                            </div>
+                            <div class="btn-group">
+                                <button class="btn btn-sm btn-outline-info" onclick="openScheduleModal({{ master.id }}, '{{ master.name }}')" title="График">📅</button>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="editMaster({{ master.id }}, '{{ master.name }}', '{{ master.specialization }}', `{{ master.description or '' }}`, {{ master.services | map(attribute='id') | list }})" title="Редактировать">✏️</button>
+                            </div>
+                        </div>
+                        <p class="card-text small mt-2 mb-2 text-truncate">{{ master.description or '' }}</p>
+                        <div class="d-flex flex-wrap gap-1">
+                            {% for service in master.services %}
+                                <span class="badge bg-light text-dark border">{{ service.name }}</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="scheduleModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">📅 График: <span id="scheduleMasterName"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="scheduleForm">
+                    <input type="hidden" id="scheduleMasterId">
+                    <div id="daysContainer"></div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                <button type="button" class="btn btn-primary" onclick="saveSchedule()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let selectedServiceIds = [];
+    const serviceNames = { {% for service in services %} {{ service.id }}: "{{ service.name }}", {% endfor %} };
+    const daysOfWeek = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"];
+
+    function addServiceTag() {
+        const select = document.getElementById('serviceSelect');
+        const serviceId = parseInt(select.value);
+        if (!serviceId || selectedServiceIds.includes(serviceId)) return;
+        selectedServiceIds.push(serviceId);
+        renderTags();
+        select.value = "";
+    }
+
+    function removeServiceTag(id) {
+        selectedServiceIds = selectedServiceIds.filter(item => item !== id);
+        renderTags();
+    }
+
+    function renderTags() {
+        const container = document.getElementById('selectedServicesContainer');
+        container.innerHTML = '';
+        selectedServiceIds.forEach(id => {
+            const badge = document.createElement('span');
+            badge.className = 'badge bg-primary d-flex align-items-center';
+            badge.innerHTML = `${serviceNames[id]} <span onclick="removeServiceTag(${id})" style="cursor:pointer; margin-left:8px;">&times;</span>`;
+            container.appendChild(badge);
+        });
+    }
+
+    function editMaster(id, name, spec, desc, serviceIds) {
+        document.getElementById('masterId').value = id;
+        document.getElementById('name').value = name;
+        document.getElementById('specialization').value = spec;
+        document.getElementById('description').value = desc;
+        selectedServiceIds = serviceIds;
+        renderTags();
+        document.getElementById('formTitle').innerText = '✏️ Редактировать мастера';
+        document.getElementById('submitBtn').innerText = 'Обновить';
+        document.getElementById('submitBtn').classList.replace('btn-success', 'btn-primary');
+        document.getElementById('cancelBtn').style.display = 'block';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function resetForm() {
+        document.querySelector('form').reset();
+        document.getElementById('masterId').value = '';
+        selectedServiceIds = [];
+        renderTags();
+        document.getElementById('formTitle').innerText = '➕ Добавить мастера';
+        document.getElementById('submitBtn').innerText = 'Сохранить';
+        document.getElementById('submitBtn').classList.replace('btn-primary', 'btn-success');
+        document.getElementById('cancelBtn').style.display = 'none';
+    }
+
+    async function handleFormSubmit(event) {
+        event.preventDefault();
+        const id = document.getElementById('masterId').value;
+        const formData = new FormData(event.target);
+        const data = {
+            name: formData.get('name'),
+            specialization: formData.get('specialization'),
+            description: formData.get('description'),
+            service_ids: selectedServiceIds
+        };
+        let url = '/api/v1/masters';
+        let method = 'POST';
+        if (id) { url = `/api/v1/masters/${id}`; method = 'PUT'; }
+        const res = await apiRequest(url, method, data);
+        if (res) location.reload();
+    }
+
+    async function openScheduleModal(masterId, masterName) {
+        document.getElementById('scheduleMasterName').innerText = masterName;
+        document.getElementById('scheduleMasterId').value = masterId;
+        const scheduleData = await apiRequest(`/api/v1/masters/${masterId}/schedule`);
+        const container = document.getElementById('daysContainer');
+        container.innerHTML = '';
+        scheduleData.sort((a, b) => a.day_of_week - b.day_of_week);
+        scheduleData.forEach(day => {
+            const dayName = daysOfWeek[day.day_of_week - 1];
+            const isChecked = day.is_working ? 'checked' : '';
+            const html = `
+                <div class="row mb-2 align-items-center border-bottom pb-2">
+                    <div class="col-4">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="day_${day.day_of_week}" ${isChecked} onchange="toggleTimeInputs(${day.day_of_week})">
+                            <label class="form-check-label" for="day_${day.day_of_week}">${dayName}</label>
+                        </div>
+                    </div>
+                    <div class="col-4"><input type="time" class="form-control form-control-sm" id="start_${day.day_of_week}" value="${day.start_time}" ${!day.is_working ? 'disabled' : ''}></div>
+                    <div class="col-4"><input type="time" class="form-control form-control-sm" id="end_${day.day_of_week}" value="${day.end_time}" ${!day.is_working ? 'disabled' : ''}></div>
+                </div>`;
+            container.innerHTML += html;
+        });
+        new bootstrap.Modal(document.getElementById('scheduleModal')).show();
+    }
+
+    function toggleTimeInputs(dayIndex) {
+        const checkbox = document.getElementById(`day_${dayIndex}`);
+        document.getElementById(`start_${dayIndex}`).disabled = !checkbox.checked;
+        document.getElementById(`end_${dayIndex}`).disabled = !checkbox.checked;
+    }
+
+    async function saveSchedule() {
+        const masterId = document.getElementById('scheduleMasterId').value;
+        const items = [];
+        for (let i = 1; i <= 7; i++) {
+            items.push({
+                day_of_week: i,
+                is_working: document.getElementById(`day_${i}`).checked,
+                start_time: document.getElementById(`start_${i}`).value,
+                end_time: document.getElementById(`end_${i}`).value
+            });
+        }
+        const res = await apiRequest(`/api/v1/masters/${masterId}/schedule`, 'POST', { items: items });
+        if (res) { alert('График сохранен!'); bootstrap.Modal.getInstance(document.getElementById('scheduleModal')).hide(); }
+    }
+</script>
+{% endblock %}
+EOF

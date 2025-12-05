@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row">
+    <div class="col-md-4 mb-4">
+        <div class="card p-3 shadow-sm sticky-top" style="top: 20px;">
+            <h5 id="formTitle">➕ Добавить клиента</h5>
+            <form onsubmit="handleFormSubmit(event)">
+                <input type="hidden" id="clientId">
+                <div class="mb-3">
+                    <label class="form-label">Имя</label>
+                    <input type="text" id="name" name="name" class="form-control" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Телефон</label>
+                    <input type="text" id="phone_number" name="phone_number" class="form-control" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-muted small">Telegram ID (необязательно)</label>
+                    <input type="number" id="telegram_user_id" name="telegram_user_id" class="form-control form-control-sm">
+                </div>
+                <div class="d-flex gap-2">
+                    <button type="submit" id="submitBtn" class="btn btn-success flex-grow-1">Сохранить</button>
+                    <button type="button" id="cancelBtn" class="btn btn-secondary" style="display:none;" onclick="resetForm()">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <div class="col-md-8">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead class="table-light"><tr><th>Имя</th><th>Телефон</th><th>Telegram ID</th><th>Действия</th></tr></thead>
+                        <tbody>
+                            {% for client in clients %}
+                            <tr>
+                                <td class="fw-bold">{{ client.name }}</td>
+                                <td>{{ client.phone_number }}</td>
+                                <td class="text-muted small">{{ client.telegram_user_id }}</td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-primary" onclick="editClient({{ client.id }}, '{{ client.name }}', '{{ client.phone_number }}', {{ client.telegram_user_id }})"><i class="fas fa-pen"></i></button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function editClient(id, name, phone, tgId) {
+        document.getElementById('clientId').value = id;
+        document.getElementById('name').value = name;
+        document.getElementById('phone_number').value = phone;
+        document.getElementById('telegram_user_id').value = tgId;
+        document.getElementById('formTitle').innerText = '✏️ Редактировать клиента';
+        document.getElementById('submitBtn').innerText = 'Обновить';
+        document.getElementById('submitBtn').classList.replace('btn-success', 'btn-primary');
+        document.getElementById('cancelBtn').style.display = 'block';
+    }
+    function resetForm() {
+        document.querySelector('form').reset();
+        document.getElementById('clientId').value = '';
+        document.getElementById('formTitle').innerText = '➕ Добавить клиента';
+        document.getElementById('submitBtn').innerText = 'Сохранить';
+        document.getElementById('submitBtn').classList.replace('btn-primary', 'btn-success');
+        document.getElementById('cancelBtn').style.display = 'none';
+    }
+    async function handleFormSubmit(event) {
+        event.preventDefault();
+        const id = document.getElementById('clientId').value;
+        const formData = new FormData(event.target);
+        const data = {
+            name: formData.get('name'),
+            phone_number: formData.get('phone_number'),
+            telegram_user_id: formData.get('telegram_user_id') ? parseInt(formData.get('telegram_user_id')) : null
+        };
+        let url = '/api/v1/clients_manual';
+        let method = 'POST';
+        if (id) { url = `/api/v1/clients_manual/${id}`; method = 'PUT'; }
+        const res = await apiRequest(url, method, data);
+        if (res) location.reload();
+    }
+</script>
+{% endblock %}
+EOF

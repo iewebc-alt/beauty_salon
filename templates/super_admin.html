@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>SuperAdmin | Платформа</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f0f2f5; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        .step-circle { 
+            width: 24px; height: 24px; background: #0d6efd; color: white; 
+            border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; 
+            font-size: 12px; margin-right: 8px; 
+        }
+        .code-block {
+            background: #212529; color: #00ff9d; padding: 10px; border-radius: 6px; 
+            font-family: monospace; cursor: pointer; position: relative;
+        }
+        .code-block:hover::after {
+            content: "Копировать"; position: absolute; right: 10px; top: 50%; 
+            transform: translateY(-50%); color: white; font-size: 10px;
+        }
+    </style>
+</head>
+<body class="p-4">
+    <div class="container">
+        <div class="d-flex justify-content-between align-items-center mb-5">
+            <h2 class="fw-bold text-primary">🏢 Управление салонами</h2>
+            <button class="btn btn-success btn-lg shadow-sm" onclick="openModal()">➕ Создать салон</button>
+        </div>
+
+        <div class="card">
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th class="ps-4">ID</th>
+                            <th>Название</th>
+                            <th>Логин</th>
+                            <th>Бот</th>
+                            <th>Статус</th>
+                            <th>Вход</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for salon in salons %}
+                        <tr>
+                            <td class="ps-4 text-muted">#{{ salon.id }}</td>
+                            <td class="fw-bold">{{ salon.title or salon.name }}</td>
+                            <td><code class="bg-light px-2 py-1 rounded">{{ salon.name }}</code></td>
+                            <td>
+                                <span class="badge bg-secondary">Скрыт</span>
+                            </td>
+                            <td>
+                                {% if salon.is_active %}
+                                    <span class="badge bg-success rounded-pill">Активен</span>
+                                {% else %}
+                                    <span class="badge bg-danger rounded-pill">Отключен</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="/admin/schedule" target="_blank" class="btn btn-sm btn-outline-primary" title="Войти">
+                                    Админка ↗️
+                                </a>
+                                <div class="small text-muted mt-1">Pass: {{ salon.admin_password }}</div>
+                            </td>
+                            <td class="pe-4 text-end">
+                                <button class="btn btn-sm btn-light border" onclick="editSalon({{ salon.id }}, '{{ salon.name }}', '{{ salon.telegram_token }}', '{{ salon.admin_password }}', {{ 'true' if salon.is_active else 'false' }}, '{{ salon.title or '' }}')">
+                                    ⚙️
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно -->
+    <div class="modal fade" id="salonModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="modalTitle">Новый салон</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    
+                    <form id="salonForm" onsubmit="saveSalon(event)">
+                        <input type="hidden" id="salonId">
+                        
+                        <!-- ШАГ 1: Основные данные -->
+                        <h6 class="mb-3"><span class="step-circle">1</span>Данные о салоне</h6>
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Название (Русский)</label>
+                                <input type="text" id="title" name="title" class="form-control" placeholder="Салон 'Ромашка'" oninput="generateData(this.value)" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Логин (Системный)</label>
+                                <input type="text" id="name" name="name" class="form-control bg-light" readonly required>
+                            </div>
+                        </div>
+
+                        <!-- ШАГ 2: Telegram Бот -->
+                        <h6 class="mb-3"><span class="step-circle">2</span>Подключение Telegram</h6>
+                        <div class="alert alert-light border mb-3">
+                            <div class="d-flex align-items-center justify-content-between mb-2">
+                                <span class="small text-muted">Мы сгенерировали уникальное имя, чтобы не было ошибки "Username taken".</span>
+                                <a href="https://t.me/BotFather" target="_blank" class="btn btn-sm btn-outline-info">Открыть @BotFather ↗️</a>
+                            </div>
+                            
+                            <div class="mb-2">
+                                <small>1. Отправьте эту команду (создаст бота):</small>
+                                <div class="code-block" onclick="copyToClipboard('/newbot')">/newbot</div>
+                            </div>
+                            <div class="mb-2">
+                                <small>2. Отправьте имя (название):</small>
+                                <div class="code-block" id="botNamePreview" onclick="copyText(this)">Салон ...</div>
+                            </div>
+                            <div class="mb-2">
+                                <small>3. Отправьте юзернейм (уникальный):</small>
+                                <div class="code-block" id="botUserPreview" onclick="copyText(this)">salon_..._bot</div>
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="form-label fw-bold text-success">Вставьте полученный HTTP API Token:</label>
+                            <input type="text" id="token" name="token" class="form-control form-control-lg border-success" placeholder="Например: 7823...:AAF..." required>
+                        </div>
+
+                        <!-- ШАГ 3: Пароль -->
+                        <h6 class="mb-3"><span class="step-circle">3</span>Доступы</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Пароль админа</label>
+                                <input type="text" id="password" name="password" class="form-control" value="admin" required>
+                            </div>
+                            <div class="col-md-6 d-flex align-items-end">
+                                <div class="form-check mb-2">
+                                    <input type="checkbox" class="form-check-input" id="isActive" checked>
+                                    <label class="form-check-label">Салон активен</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary w-100 py-2">Сохранить и запустить</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const modal = new bootstrap.Modal(document.getElementById('salonModal'));
+
+        // Генерация логина и имен для бота
+        function generateData(text) {
+            if (document.getElementById('salonId').value) return; // Не менять при редактировании
+
+            const ru = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','ж':'zh','з':'z','и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'h','ц':'c','ч':'ch','ш':'sh','щ':'sch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya',' ':'_'};
+            
+            let n_str = [];
+            let lowerText = text.toLowerCase();
+            for ( let i = 0; i < lowerText.length; i++ ) {
+                let char = lowerText[i];
+                if (ru[char] !== undefined) n_str.push(ru[char]);
+                else if (/[a-z0-9]/.test(char)) n_str.push(char);
+                else if (char === ' ') n_str.push('_');
+            }
+            const cleanName = n_str.join('');
+            
+            // 1. Логин системы
+            document.getElementById('name').value = 'salon_' + cleanName;
+
+            // 2. Имя бота (для людей)
+            document.getElementById('botNamePreview').innerText = text;
+
+            // 3. Юзернейм бота (Уникальный! Добавляем рандом)
+            const randomId = Math.floor(Math.random() * 1000);
+            document.getElementById('botUserPreview').innerText = `${cleanName}_${randomId}_bot`;
+        }
+
+        function copyText(element) {
+            navigator.clipboard.writeText(element.innerText);
+            const original = element.innerText;
+            element.innerText = "Скопировано!";
+            setTimeout(() => element.innerText = original, 1000);
+        }
+        function copyToClipboard(text) {
+             navigator.clipboard.writeText(text);
+        }
+
+        async function apiRequest(url, method, body) {
+            const response = await fetch(url, {
+                method: method,
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+            if (response.ok) location.reload();
+            else {
+                const err = await response.json();
+                alert("Ошибка: " + (err.detail || response.statusText));
+            }
+        }
+
+        function openModal() {
+            document.getElementById('salonId').value = '';
+            document.getElementById('salonForm').reset();
+            document.getElementById('modalTitle').innerText = 'Новый салон';
+            document.getElementById('name').readOnly = true;
+            modal.show();
+        }
+
+        function editSalon(id, name, token, password, isActive, title) {
+            document.getElementById('salonId').value = id;
+            document.getElementById('name').value = name;
+            document.getElementById('title').value = title;
+            document.getElementById('token').value = token;
+            document.getElementById('password').value = password;
+            document.getElementById('isActive').checked = isActive;
+            
+            document.getElementById('modalTitle').innerText = 'Редактирование салона';
+            modal.show();
+        }
+
+        async function saveSalon(e) {
+            e.preventDefault();
+            const id = document.getElementById('salonId').value;
+            const formData = new FormData(e.target);
+            
+            if (id) {
+                const data = {
+                    name: formData.get('name'),
+                    telegram_token: formData.get('token'),
+                    admin_password: formData.get('password'),
+                    is_active: document.getElementById('isActive').checked
+                };
+                await apiRequest(`/superadmin/salons/${id}`, 'PUT', data);
+            } else {
+                await fetch('/superadmin/salons', {method:'POST', body: formData}).then(async res => {
+                    const data = await res.json();
+                    if(res.ok) {
+                        alert(data.message || "Салон создан! Бот запускается...");
+                        location.reload();
+                    } else alert(data.detail || "Ошибка");
+                });
+            }
+        }
+    </script>
+</body>
+</html>
